@@ -503,6 +503,163 @@ def test_boundary_change_handling():
     print("  ✓ 행정구역 개편 병합 + 자동 탐지 + 단절 경고")
 
 
+def test_invalid_param_error_is_not_retried():
+    """'존재하지 않는 시도코드'(99)는 재시도 대상이 아니다.
+
+    실제 Actions 실행에서 터진 회귀: 없는 코드 하나당 1.5+3+6+12=22.5초를
+    재시도로 버렸다. 00~99 를 훑으면 83개 x 22.5초 = 31분이 그냥 날아가
+    잡이 취소됐다. 같은 요청에 같은 답이 오는 오류는 즉시 올려야 한다.
+    """
+    from kortrade.client import CustomsAPIError, parse_response
+
+    bad_sido = ("<?xml version='1.0' encoding='UTF-8'?><response>"
+                "<header><resultCode>99</resultCode>"
+                "<resultMsg>존재하지 않는 시도코드입니다.</resultMsg></header>"
+                "<body><items/></body></response>")
+    try:
+        parse_response(bad_sido, SIGUNGU_FIELDS)
+        raise AssertionError("오류가 올라오지 않았다")
+    except CustomsAPIError as exc:
+        assert exc.permanent, "잘못된 파라미터인데 재시도 대상으로 분류됐다"
+        assert not exc.fatal, "전체 실행을 중단시키면 안 된다 (탐색 중 정상적인 답)"
+
+    # 일시적 오류는 그대로 재시도 대상이어야 한다 — 과잉 일반화 방지
+    transient = ("<?xml version='1.0' encoding='UTF-8'?><response>"
+                 "<header><resultCode>99</resultCode>"
+                 "<resultMsg>일시적으로 서비스를 이용할 수 없습니다.</resultMsg></header>"
+                 "<body><items/></body></response>")
+    try:
+        parse_response(transient, SIGUNGU_FIELDS)
+        raise AssertionError("오류가 올라오지 않았다")
+    except CustomsAPIError as exc:
+        assert not exc.permanent, "일시적 오류까지 재시도를 막으면 안 된다"
+
+    # fatal 은 언제나 permanent 여야 한다 (재시도 무의미)
+    try:
+        parse_response(ERROR_XML, SIGUNGU_FIELDS)
+        raise AssertionError("오류가 올라오지 않았다")
+    except CustomsAPIError as exc:
+        assert exc.fatal and exc.permanent
+    print("  ✓ 잘못된 파라미터는 재시도 금지 (백오프 낭비 회귀)")
+
+
+def test_bootstrap_does_not_bruteforce_all_codes():
+    """시도코드 부트스트랩은 00~99 전수 탐색을 기본으로 하지 않는다."""
+    from kortrade import codes as C
+
+    class _Stub:
+        def __init__(self):
+            self.asked = []
+
+        def call(self, endpoint, **params):
+            cd = params["sidoCd"]
+            self.asked.append(cd)
+            nm = C.VERIFIED_SIDO_CODES.get(cd)
+            if not nm:
+                from kortrade.client import CustomsAPIError
+                raise CustomsAPIError("서비스 오류 [99] 존재하지 않는 시도코드입니다.",
+                                      code="99", permanent=True)
+            return [{"sido_name": nm}]
+
+    with tempfile.TemporaryDirectory() as td:
+        st = Store(Path(td) / "t.sqlite")
+        cl = _Stub()
+        tables = C.bootstrap(cl, st, pre_reorg_yymm="202601")
+        assert len(cl.asked) <= 20, f"후보를 {len(cl.asked)}개나 찔렀다 — 전수 탐색이다"
+        assert len(tables["1900-01"]) == 17, tables["1900-01"]
+
+        # API 가 통째로 죽어도 내장 실측 표로 되돌아가야 한다 (표가 비면 수집 전체가 멈춘다)
+        class _Dead(_Stub):
+            def call(self, endpoint, **params):
+                from kortrade.client import CustomsAPIError
+                raise CustomsAPIError("일시 오류", code="99")
+
+        st2 = Store(Path(td) / "t2.sqlite")
+        t2 = C.bootstrap(_Dead(), st2, pre_reorg_yymm="202601")
+        assert t2["1900-01"] == C.VERIFIED_SIDO_CODES
+        st2.close()
+        st.close()
+    print("  ✓ 부트스트랩 전수탐색 금지 + API 실패 시 내장표 폴백")
+
+
+def test_empty_db_file_is_not_mistaken_for_bootstrapped():
+    """빈 DB 파일이 '이미 부트스트랩됨'으로 오판되면 안 된다.
+
+    실제 Actions 회귀: 부트스트랩이 중간에 취소됐는데 Store 를 여는 것만으로
+    sqlite 파일이 생겼고, 그 파일이 커밋됐다. 다음 실행의 `[ ! -f ... ]` 가드가
+    "DB 있음"으로 보고 부트스트랩을 건너뛰어 수집이 즉시 실패했다.
+    파일이 아니라 **표의 내용**으로 판단해야 한다.
+    """
+    from kortrade.codes import MIN_PLAUSIBLE_SIDO, VERIFIED_SIDO_CODES
+
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "empty.sqlite"
+        st = Store(p)
+        st.close()
+        assert p.exists(), "Store 를 여는 것만으로 파일이 생긴다 (가드가 속는 원인)"
+
+        st = Store(p)
+        assert st.all_sido_names() == [], "빈 DB인데 시도명이 나왔다"
+        assert len(st.all_sido_names()) < MIN_PLAUSIBLE_SIDO, "건너뛰기 조건에 걸리면 안 된다"
+
+        st.save_sido_codes(VERIFIED_SIDO_CODES, valid_from="1900-01")
+        assert len(st.all_sido_names()) >= MIN_PLAUSIBLE_SIDO, "채운 뒤엔 건너뛰어야 한다"
+        st.close()
+    print("  ✓ 빈 DB 파일 ≠ 부트스트랩 완료 (수집 즉시실패 회귀)")
+
+
+def test_reorg_sido_window_is_skipped_not_fatal():
+    """2026-07 시도 개편 — 개편 전/후 어느 쪽에도 없는 구간은 '건너뛰기'여야 한다.
+
+    실제 GitHub Actions 실행에서 터진 회귀: 최신 표만 보고 시도 목록을 만들면
+    '전남광주통합특별시'를 2020년 구간에 조회하려다 KeyError 로 죽었다.
+    반대로 개편 전 표만 쓰면 '광주광역시'가 개편 후 구간에서 죽는다.
+    수집은 합집합으로 돌되, 존재하지 않던 구간만 조용히 건너뛰어야 한다.
+    """
+    from kortrade.collect import Collector
+    from kortrade.codes import sido_code_for
+
+    class _StubClient:
+        max_months_per_call = 12
+
+        def __init__(self):
+            self.seen = []
+
+        def call(self, endpoint, **params):
+            self.seen.append(params)
+            return []
+
+    with tempfile.TemporaryDirectory() as td:
+        st = Store(Path(td) / "t.sqlite")
+        st.save_sido_codes({"29": "광주광역시", "46": "전라남도", "11": "서울특별시"},
+                           valid_from="1900-01")
+        st.save_sido_codes({"12": "전남광주통합특별시", "11": "서울특별시"},
+                           valid_from="2026-07")
+
+        # 1) 목록은 합집합이어야 한다 — 한쪽 표만 쓰면 반대쪽 기간을 통째로 놓친다
+        names = st.all_sido_names()
+        assert {"광주광역시", "전라남도", "전남광주통합특별시", "서울특별시"} <= set(names), names
+
+        # 2) 해당 기간에 없는 시도는 조회 자체가 불가능해야 한다 (KeyError)
+        try:
+            sido_code_for(st, "전남광주통합특별시", "2020-01")
+            raise AssertionError("개편 전 구간에서 통합시가 조회되면 안 된다")
+        except KeyError:
+            pass
+
+        # 3) 그런데 수집기는 죽지 않고 그 창만 건너뛰어야 한다
+        client = _StubClient()
+        col = Collector(client=client, store=st, revision_window=6)
+        col.collect_region("전남광주통합특별시", ["330499"], "202001", "202012")
+        assert client.seen == [], "존재하지 않던 구간인데 API 를 호출했다"
+
+        # 4) 존재하는 구간은 정상 호출된다
+        col.collect_region("광주광역시", ["330499"], "202001", "202012")
+        assert client.seen and client.seen[0]["sidoCd"] == "29", client.seen
+        st.close()
+    print("  ✓ 시도 개편 구간 건너뛰기 (KeyError 회귀)")
+
+
 def test_regions_config_is_evidence_based():
     """regions.yaml 의 모든 항목은 실측 근거(evidence)를 달아야 한다."""
     from kortrade import regions
