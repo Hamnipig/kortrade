@@ -195,7 +195,14 @@ class Collector:
                 log.warning("시군구 API 는 HS 6단위만 허용. '%s' 건너뜀", hs)
                 continue
             for s, e, force in self._windows(start, end):
-                sido_cd = sido_code_for(self.store, sido_name, normalize_period(s))
+                try:
+                    sido_cd = sido_code_for(self.store, sido_name, normalize_period(s))
+                except KeyError:
+                    # 그 시점에 존재하지 않던 시도. 2026-07 개편으로 '전남광주통합특별시'는
+                    # 개편 전 구간에, '광주광역시'·'전라남도'는 개편 후 구간에 코드가 없다.
+                    # 오류가 아니라 정상적인 공백이므로 그 창만 건너뛴다.
+                    log.debug("%s 는 %s 구간에 존재하지 않음 — 건너뜀", sido_name, s)
+                    continue
                 params = {"strtYymm": s, "endYymm": e, "HsSgn": hs, "sidoCd": sido_cd}
                 rows = self._fetch("sigungu_item", params, force)
                 recs = []

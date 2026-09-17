@@ -219,6 +219,18 @@ class Store:
             ).fetchall()
         return {r["sido_cd"]: r["sido_name"] for r in rows}
 
+    def all_sido_names(self) -> list[str]:
+        """개편 전/후 표를 **합집합**으로 돌려준다.
+
+        2026-07 개편으로 '광주광역시'·'전라남도'는 사라지고 '전남광주통합특별시'가 생겼다.
+        어느 한쪽 표만 쓰면 반대쪽 기간을 통째로 놓친다. 수집은 둘 다 돌되,
+        각 시도가 존재하지 않던 기간은 collect_region 이 건너뛴다.
+        """
+        rows = self.conn.execute(
+            "SELECT DISTINCT sido_name FROM sido_codes ORDER BY sido_name"
+        ).fetchall()
+        return [r["sido_name"] for r in rows]
+
     def resolve_sido(self, name: str) -> str | None:
         """'강원' / '강원도' / '강원특별자치도' 어느 표기로도 코드를 찾는다."""
         from .codes import canon_sido
