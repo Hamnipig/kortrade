@@ -89,8 +89,12 @@ def main() -> int:
 
     client = CustomsClient()
     with Store(args.db) as store:
-        if not store.sido_codes():
-            print("\n시도코드 표가 없습니다. 먼저 scripts/bootstrap_codes.py 를 실행하세요.")
+        if not store.all_sido_names():
+            # DB 파일은 있는데 표가 비어 있는 경우가 실제로 있었다(부트스트랩 중단).
+            # 파일 존재로 판단하는 가드에 걸리지 않도록 메시지를 명확히 한다.
+            print(f"\n{args.db} 에 시도코드 표가 비어 있습니다."
+                  "\n  python scripts/bootstrap_codes.py --post <최신월> --if-missing"
+                  "\n를 먼저 실행하세요. (DB 파일이 있어도 표는 비어 있을 수 있습니다)")
             return 1
 
         col = Collector(client=client, store=store, revision_window=args.revision_window)
