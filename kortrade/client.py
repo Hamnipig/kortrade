@@ -74,7 +74,9 @@ class EndpointSpec:
 class CustomsClient:
     service_key: str | None = None
     config_path: Path = CONFIG_DIR / "api.yaml"
-    timeout: int = 40
+    # (연결, 응답) 분리. 연결이 안 되는 건 40초를 기다려도 결과가 같으므로 짧게 끊고
+    # 재시도로 넘긴다. 응답은 대용량 구간에서 느릴 수 있어 넉넉히 준다.
+    timeout: tuple[int, int] = (15, 90)
     max_retries: int = 4
     min_interval: float = 0.35          # 초당 ~3콜. 게이트웨이 부하 방지
     daily_call_budget: int = 9_000      # 개발계정 10,000 대비 안전 마진
