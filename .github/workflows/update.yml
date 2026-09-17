@@ -54,7 +54,11 @@ jobs:
         run: |
           if [ ! -f data/kortrade.sqlite ]; then
             echo "DB 없음 — 시도코드부터 만듭니다"
-            python scripts/bootstrap_codes.py --post "$(date -u -d '-2 month' +%Y%m)"
+            # 개편 후 표의 기준월은 '조회 가능한 최신월'로 잡는다.
+            # 고정 오프셋(-2개월)로 잡으면 2026-08부터 응답하는 통합코드(12)를 놓친다.
+            POST=$(python -c "from kortrade.collect import latest_available_yymm; print(latest_available_yymm())")
+            echo "개편 후 기준월: $POST"
+            python scripts/bootstrap_codes.py --post "$POST"
           else
             echo "DB 있음 — 부트스트랩 건너뜀"
           fi
