@@ -49,11 +49,20 @@ def _candidates() -> list[str]:
     return LIKELY_CODES + rest
 
 
+# 검증 결과가 이보다 적으면 API 쪽 문제로 보고 하드코딩 표로 되돌린다.
+MIN_PLAUSIBLE_SIDO = 10
+
+
 def discover_sido_codes(client: CustomsClient, ref_yymm: str,
-                        exhaustive: bool = True) -> dict[str, str]:
-    """ref_yymm(YYYYMM) 시점 기준으로 sidoCd -> 시도명 매핑을 만든다."""
+                        exhaustive: bool = False,
+                        candidates: list[str] | None = None) -> dict[str, str]:
+    """ref_yymm(YYYYMM) 시점 기준으로 sidoCd -> 시도명 매핑을 만든다.
+
+    기본은 **실측으로 확인된 후보만** 확인한다(17콜, 수 초).
+    exhaustive=True 면 00~99 전수 탐색(100콜) — 코드 체계가 또 바뀌었을 때만 쓴다.
+    """
     found: dict[str, str] = {}
-    cands = _candidates() if exhaustive else LIKELY_CODES
+    cands = candidates or (_candidates() if exhaustive else LIKELY_CODES)
 
     for code in cands:
         try:
@@ -61,7 +70,11 @@ def discover_sido_codes(client: CustomsClient, ref_yymm: str,
         except CustomsAPIError as exc:
             if exc.fatal:
                 raise
-            log.warning("시도코드 %s 탐색 실패: %s", code, exc)
+            if exc.permanent:
+                # '존재하지 않는 시도코드' — 탐색 중엔 정상적인 답이다. 경고 아님.
+                log.debug("시도코드 %s 없음", code)
+            else:
+                log.warning("시도코드 %s 탐색 실패: %s", code, exc)
             continue
         names = {r.get("sido_name", "").strip() for r in rows if r.get("sido_name")}
         names.discard("")
@@ -75,19 +88,41 @@ def discover_sido_codes(client: CustomsClient, ref_yymm: str,
     return found
 
 
+def _verified_or_fallback(client: CustomsClient, ref_yymm: str,
+                          expected: dict[str, str], exhaustive: bool) -> dict[str, str]:
+    """실측 표를 후보로 확인하고, 확인이 실패하면 실측 표를 그대로 쓴다."""
+    cands = None if exhaustive else list(expected)
+    found = discover_sido_codes(client, ref_yymm, exhaustive=exhaustive, candidates=cands)
+    if len(found) >= MIN_PLAUSIBLE_SIDO:
+        missing = set(expected) - set(found)
+        if missing:
+            log.info("%s 기준: 실측 표 대비 응답 없는 코드 %s (개편 반영으로 보임)",
+                     ref_yymm, sorted(missing))
+        return found
+    log.warning("%s 기준 시도코드 확인이 %d개뿐 — API 이상으로 보고 내장 표(%d개)를 씁니다",
+                ref_yymm, len(found), len(expected))
+    return dict(expected)
+
+
 def bootstrap(client: CustomsClient, store: Store,
               pre_reorg_yymm: str = "202601",
-              post_reorg_yymm: str | None = None) -> dict[str, dict[str, str]]:
-    """개편 전/후 두 벌의 시도코드 표를 만들어 저장한다."""
+              post_reorg_yymm: str | None = None,
+              exhaustive: bool = False) -> dict[str, dict[str, str]]:
+    """개편 전/후 두 벌의 시도코드 표를 만들어 저장한다.
+
+    00~99 전수 탐색은 하지 않는다. 없는 코드는 resultCode 99 로 돌아오는데,
+    후보가 83개면 그만큼 낭비다. 실측으로 확정된 표를 후보로 확인만 한다.
+    """
     out: dict[str, dict[str, str]] = {}
 
-    pre = discover_sido_codes(client, pre_reorg_yymm)
+    pre = _verified_or_fallback(client, pre_reorg_yymm, VERIFIED_SIDO_CODES, exhaustive)
     if pre:
         store.save_sido_codes(pre, valid_from="1900-01")
         out["1900-01"] = pre
 
     if post_reorg_yymm:
-        post = discover_sido_codes(client, post_reorg_yymm)
+        post = _verified_or_fallback(client, post_reorg_yymm,
+                                     VERIFIED_SIDO_CODES_POST_202607, exhaustive)
         if post:
             store.save_sido_codes(post, valid_from=REORG_EFFECTIVE)
             out[REORG_EFFECTIVE] = post

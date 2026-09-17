@@ -35,12 +35,26 @@ FATAL_CODES = {
     "22",  # LIMITED NUMBER OF SERVICE REQUESTS EXCEEDS
 }
 
+# 잘못된 파라미터를 지적하는 응답. 같은 요청을 다시 보내도 답이 바뀌지 않으므로
+# **재시도하면 안 된다**. (fatal 과 다르다: 전체 실행을 중단시키지는 않는다.)
+#   실측 사례 — sidoCd 를 00~99 로 훑을 때 없는 코드마다 resultCode 99
+#   '존재하지 않는 시도코드입니다' 가 돌아온다. 이걸 재시도하면 코드 하나당
+#   1.5+3+6+12 = 22.5초를 버리고, 100개 훑으면 37분이 그냥 날아간다.
+_PERMANENT_HINTS = ("존재하지 않", "유효하지 않", "잘못된", "NOT_EXIST", "INVALID")
+
+
+def _is_permanent(code: str, msg: str) -> bool:
+    return code == "99" and any(h in msg for h in _PERMANENT_HINTS)
+
 
 class CustomsAPIError(RuntimeError):
-    def __init__(self, message: str, code: str | None = None, fatal: bool = False):
+    def __init__(self, message: str, code: str | None = None, fatal: bool = False,
+                 permanent: bool = False):
         super().__init__(message)
         self.code = code
         self.fatal = fatal
+        # 재시도 무의미 (잘못된 파라미터). fatal 이면 자동으로 permanent 이기도 하다.
+        self.permanent = permanent or fatal
 
 
 @dataclass
@@ -130,7 +144,8 @@ class CustomsClient:
                 resp.raise_for_status()
                 return parse_response(resp.content, spec.item_fields)
             except CustomsAPIError as exc:
-                if exc.fatal:
+                # 잘못된 파라미터는 재시도해도 같은 답이 온다. 즉시 올린다.
+                if exc.permanent:
                     raise
                 last_exc = exc
             except (requests.RequestException, ET.ParseError) as exc:
@@ -172,7 +187,9 @@ def parse_response(payload: bytes | str, item_fields: dict[str, str]) -> list[di
         if rc not in ("", "00", "0", "INFO-000"):
             msg = (root.findtext(".//header/resultMsg")
                    or root.findtext(".//resultMsg") or "").strip()
-            raise CustomsAPIError(f"서비스 오류 [{rc}] {msg}", code=rc, fatal=rc in FATAL_CODES)
+            raise CustomsAPIError(f"서비스 오류 [{rc}] {msg}", code=rc,
+                                  fatal=rc in FATAL_CODES,
+                                  permanent=_is_permanent(rc, msg))
 
     out: list[dict[str, str]] = []
     for item in root.iter("item"):
