@@ -25,13 +25,16 @@ def main() -> int:
     ap.add_argument("--pre", default="202601", help="개편 전 기준월 YYYYMM")
     ap.add_argument("--post", default=None, help="개편 후 기준월 YYYYMM (예: 202608)")
     ap.add_argument("--db", default="data/kortrade.sqlite")
+    ap.add_argument("--exhaustive", action="store_true",
+                    help="00~99 전수 탐색(100콜/표). 코드 체계가 또 바뀌었을 때만 쓴다.")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     client = CustomsClient()
     with Store(args.db) as store:
-        tables = bootstrap(client, store, pre_reorg_yymm=args.pre, post_reorg_yymm=args.post)
+        tables = bootstrap(client, store, pre_reorg_yymm=args.pre,
+                           post_reorg_yymm=args.post, exhaustive=args.exhaustive)
 
     if not tables:
         print("시도코드를 하나도 찾지 못했습니다. 인증키와 기준월을 확인하세요.")
