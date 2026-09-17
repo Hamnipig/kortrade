@@ -1,0 +1,49 @@
+{
+ "generatedAt": "2026-09-17 18:44 KST",
+ "sectors": [
+  {
+   "key": "cosmetics",
+   "name": "화장품",
+   "subtitle": "HS 33류 · K-뷰티",
+   "status": "active",
+   "order": 1,
+   "ready": true,
+   "asOf": "2026-08",
+   "ytd": 8360.7,
+   "yoy": 30.3,
+   "cats": 8
+  },
+  {
+   "key": "semiconductor",
+   "name": "반도체",
+   "subtitle": "HS 8541·8542·8486 · 소자/장비",
+   "status": "draft",
+   "order": 2,
+   "ready": false,
+   "reason": "HS 코드 미검증 (draft)"
+  },
+  {
+   "key": "battery",
+   "name": "2차전지·ESS",
+   "subtitle": "HS 8507 · 셀/소재",
+   "status": "draft",
+   "order": 3,
+   "ready": false,
+   "reason": "HS 코드 미검증 (draft)"
+  }
+ ],
+ "coverage": {
+  "sector_trade": {
+   "rows": 0,
+   "from": null,
+   "to": null
+  },
+  "region_trade": {
+   "rows": 130220,
+   "from": "2020-01",
+   "to": "2026-08"
+  },
+  "revisions": 0
+ },
+ "source": "관세청_시군구별 품목별 수출입실적 (공공데이터포털 data.go.kr)"
+}
