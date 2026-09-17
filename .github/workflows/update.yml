@@ -46,22 +46,30 @@ jobs:
             echo "::error::DATA_GO_KR_SERVICE_KEY 시크릿이 없습니다. Settings > Secrets and variables > Actions 에 추가하세요."
             exit 1
           fi
+          set +e
           python scripts/check_key.py
+          rc=$?
+          set -e
+          # 종료코드 2 = 관세청 서버에 연결 자체가 안 됨 (키 문제 아님).
+          # 해외 러너에서 간헐적으로 발생한다. 90분을 태우지 말고 바로 끝낸다.
+          if [ "$rc" = "2" ]; then
+            echo "::error::관세청 API 에 연결되지 않습니다(키 문제 아님). 30분~2시간 뒤 재실행하세요."
+            exit 1
+          fi
+          exit $rc
 
-      - name: 시도코드 부트스트랩 (최초 1회)
+      # DB **파일**이 있는지로 판단하면 안 된다. 부트스트랩이 중간에 죽어도 빈
+      # sqlite 파일은 남으므로, 다음 실행이 "있음"으로 오판하고 수집에서 멈춘다.
+      # --if-missing 이 표의 **내용**을 보고 판단한다 (이미 있으면 0콜).
+      - name: 시도코드 부트스트랩
         env:
           DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
         run: |
-          if [ ! -f data/kortrade.sqlite ]; then
-            echo "DB 없음 — 시도코드부터 만듭니다"
-            # 개편 후 표의 기준월은 '조회 가능한 최신월'로 잡는다.
-            # 고정 오프셋(-2개월)로 잡으면 2026-08부터 응답하는 통합코드(12)를 놓친다.
-            POST=$(python -c "from kortrade.collect import latest_available_yymm; print(latest_available_yymm())")
-            echo "개편 후 기준월: $POST"
-            python scripts/bootstrap_codes.py --post "$POST"
-          else
-            echo "DB 있음 — 부트스트랩 건너뜀"
-          fi
+          # 개편 후 표의 기준월은 '조회 가능한 최신월'로 잡는다.
+          # 고정 오프셋(-2개월)로 잡으면 2026-08부터 응답하는 통합코드(12)를 놓친다.
+          POST=$(python -c "from kortrade.collect import latest_available_yymm; print(latest_available_yymm())")
+          echo "개편 후 기준월: $POST"
+          python scripts/bootstrap_codes.py --post "$POST" --if-missing
 
       - name: 수집
         env:
