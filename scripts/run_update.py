@@ -60,16 +60,28 @@ def main() -> int:
                    | {s["sido"] for c in comp_cfg.get("companies", {}).values()
                       for s in (c.get("secondary_sites") or []) if s.get("sido")})
 
-    est_sector = estimate_calls(len(core), len(countries), args.start, end)
-    est_total = estimate_calls(len(core), 1, args.start, end)
-    est_company = estimate_calls(len(company_hs), len(sidos), args.start, end)
-
     print(f"수집 구간      : {args.start} ~ {end}")
-    print(f"섹터 레이어    : HS {len(core)}개 x 국가 {len(countries)}개  → 최대 {est_sector:,}콜")
-    print(f"섹터 합계      : HS {len(core)}개                        → 최대 {est_total:,}콜")
-    print(f"기업 레이어    : HS {len(company_hs)}개 x 시도 {len(sidos)}개      → 최대 {est_company:,}콜")
-    print(f"합계(최초 1회) : 최대 {est_sector + est_total + est_company:,}콜"
-          f"  / 일 예산 9,000콜")
+
+    if args.sectors:
+        # 섹터 모드는 시군구 API 만 쓴다. 위 숫자(국가별/기업 레이어)는 돌지 않으므로 찍지 않는다.
+        want = None if args.sectors == "all" else set(args.sectors.split(","))
+        secs = [s for s in load_sectors(include_draft=False) if want is None or s.key in want]
+        n_sido = len(VERIFIED_SIDO_CODES)   # 개편 전/후 합집합이라 실제로는 1~2개 더 많다
+        est = 0
+        for sec in secs:
+            n = estimate_calls(len(sec.codes), n_sido, args.start, end)
+            est += n
+            print(f"  섹터 '{sec.key}' : HS {len(sec.codes)}개 x 시도 {n_sido}개 → 최대 {n:,}콜")
+        print(f"합계(최초 1회) : 최대 {est:,}콜  / 일 예산 9,000콜")
+    else:
+        est_sector = estimate_calls(len(core), len(countries), args.start, end)
+        est_total = estimate_calls(len(core), 1, args.start, end)
+        est_company = estimate_calls(len(company_hs), len(sidos), args.start, end)
+        print(f"섹터 레이어    : HS {len(core)}개 x 국가 {len(countries)}개  → 최대 {est_sector:,}콜")
+        print(f"섹터 합계      : HS {len(core)}개                        → 최대 {est_total:,}콜")
+        print(f"기업 레이어    : HS {len(company_hs)}개 x 시도 {len(sidos)}개      → 최대 {est_company:,}콜")
+        print(f"합계(최초 1회) : 최대 {est_sector + est_total + est_company:,}콜"
+              f"  / 일 예산 9,000콜")
     print("  ※ 2회차부터는 확정 구간을 건너뛰므로 실제 호출은 이보다 훨씬 적습니다.")
 
     if args.dry_run:
@@ -90,7 +102,10 @@ def main() -> int:
                     if want is None or s.key in want]
             if not secs:
                 log.warning("수집할 active 섹터가 없습니다 (draft 는 제외됩니다)")
-            all_sido = sorted(store.sido_codes().values()) or list(VERIFIED_SIDO_CODES.values())
+            # 개편 전/후 시도명을 **합집합**으로 돈다. store.sido_codes() 는 최신 표만
+            # 주므로 개편 전 구간의 '광주광역시'·'전라남도'를 통째로 놓친다.
+            # 각 시도가 존재하지 않던 구간은 collect_region 이 건너뛴다.
+            all_sido = store.all_sido_names() or list(VERIFIED_SIDO_CODES.values())
             for sec in secs:
                 log.info("=== 섹터 '%s' — HS %d개 x 시도 %d개 ===",
                          sec.key, len(sec.codes), len(all_sido))
