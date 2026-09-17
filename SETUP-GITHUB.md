@@ -113,6 +113,61 @@ python scripts/discover_hs.py --mode where --hs 901380 --sido 경기 충남 경�
 두되, 관세청 데이터는 공개 데이터이므로 문제는 분석 로직 노출뿐이다. 그게 걸리면
 수집은 프라이빗 레포에서 하고 `site/` 만 별도 퍼블릭 레포로 push 하는 방법이 있다.
 
+## 두 가지 배포 경로
+
+소스는 `site/index.html` 하나다. 배포 대상에 따라 데이터를 얻는 방식만 다르다.
+
+| | GitHub Pages | Claude Artifact |
+|---|---|---|
+| 데이터 | `data/*.json` 을 fetch | `window.__BOOTSTRAP__` 로 인라인 |
+| 갱신 | **자동** (매월 Actions) | 수동 (재퍼블리시) |
+| 빌드 | `build_site.py` | `build_site.py` → `build_artifact.py` |
+
+```bash
+python scripts/build_site.py                   # site/data/*.json 생성
+python scripts/build_artifact.py               # build/artifact.html (인라인 단일 파일)
+```
+
+Artifact 는 doctype/head/body 스켈레톤을 퍼블리시 시점에 씌우므로 `build_artifact.py` 가
+래퍼를 벗기고 데이터를 인라인한다. Pages 용 `site/index.html` 은 건드리지 않는다.
+
+**자동 갱신이 목적이면 Pages 가 정답이다.** Artifact 는 링크를 바로 열 수 있는 대신
+데이터가 퍼블리시 시점에 고정된다.
+
+## 러너에서 관세청 서버에 연결이 안 될 때
+
+로그가 이렇게 끝나면 **키 문제가 아니다.**
+
+```
+✗ item  연결 불가: ConnectTimeout
+키 문제가 아닙니다. apis.data.go.kr (27.101.236.63) 서버에 연결 자체가 되지 않았습니다
+```
+
+`apis.data.go.kr` 은 A 레코드가 `27.101.236.63` 하나뿐인 국내 서버다(AAAA 없음 →
+IPv6 문제는 아니다). GitHub Actions 러너는 해외(Azure) IP라서, 같은 키·같은 코드가
+한국에서는 정상 응답하는데 러너에서는 SYN 이 드롭돼 타임아웃이 나는 일이 있다.
+상시 차단은 아니고 간헐적이다 — 같은 워크플로가 다른 날 정상 수집한 기록이 있다.
+
+1. **먼저 재실행.** 30분~2시간 뒤 `Run workflow`. 대부분 이걸로 지나간다.
+2. **계속 실패하면 국내 IP에서 돌린다** — 자체 호스팅 러너.
+
+### 자체 호스팅 러너 (국내 IP)
+
+**Settings → Actions → Runners → New self-hosted runner** 에서 나오는 명령을
+본인 PC에서 그대로 실행한 뒤, 워크플로의 `runs-on` 만 바꾼다.
+
+```yaml
+jobs:
+  collect:
+    runs-on: self-hosted     # ubuntu-latest → self-hosted
+```
+
+- 장점: 국내 IP라 연결 문제가 없다. 수집도 더 빠르다.
+- 단점: **수집 시각에 PC가 켜져 있어야 한다.** 월 1회(17일 07:00)뿐이므로
+  꺼져 있었다면 나중에 수동으로 `Run workflow` 하면 그대로 따라잡는다
+  (`fetch_log` 가 이미 받은 구간을 건너뛴다).
+- `deploy` 잡은 `runs-on: ubuntu-latest` 로 두어도 된다. Pages 배포는 국내 IP가 필요 없다.
+
 ## 점검
 
 ```bash
