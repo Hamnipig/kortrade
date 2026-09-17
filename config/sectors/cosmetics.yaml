@@ -1,0 +1,25 @@
+key: cosmetics
+name: 화장품
+subtitle: HS 33류 · K-뷰티
+status: active              # active = 수집 대상 / draft = HS 코드 미검증, 수집 제외
+order: 1
+
+# 섹터 내 비중이 압도적이라 따로 떼어 봐야 하는 코드.
+# 이게 전체의 85%를 넘으면 나머지가 안 보이므로 대시보드가 "기초 vs 비기초"로 분리한다.
+dominant: "330499"
+
+categories:
+  "330499": {label: 기초,     group: 기초}
+  "330410": {label: 입술,     group: 색조}
+  "330420": {label: 눈화장,   group: 색조}
+  "330430": {label: 매니큐어, group: 색조}
+  "330491": {label: 파우더,   group: 색조}
+  "330510": {label: 샴푸,     group: 두발}
+  "330590": {label: 기타두발, group: 두발}
+  "330300": {label: 향수,     group: 향수}
+
+countries: [CN, US, JP, HK, VN, TW, RU, TH, SG, MY, ID, PH, AE, GB, FR, DE, NL, PL, AU, CA, IN, KZ]
+
+notes: |
+  2026-09 전국 스캔 기준 기초(330499)가 87.8%를 차지하고 비중을 +2.45%p 더 키웠다.
+  색조 4종(입술·눈·파우더·매니큐어)은 전부 비중 마이너스.

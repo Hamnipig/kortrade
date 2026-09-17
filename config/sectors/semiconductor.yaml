@@ -1,0 +1,27 @@
+key: semiconductor
+name: 반도체
+subtitle: HS 8541·8542·8486 · 소자/장비
+status: draft               # ★ HS 코드 미검증. discover_hs.py 로 확인 후 active 로 승격할 것
+order: 2
+
+dominant: "854232"          # 메모리. 한국 반도체 수출의 대부분
+
+categories:
+  "854232": {label: 메모리,       group: 소자}
+  "854231": {label: 프로세서·컨트롤러, group: 소자}
+  "854233": {label: 증폭기,       group: 소자}
+  "854239": {label: 기타 집적회로, group: 소자}
+  "854140": {label: 광전소자·LED,  group: 소자}
+  "854110": {label: 다이오드,     group: 소자}
+  "848620": {label: 반도체 제조장비, group: 장비}
+  "848690": {label: 장비 부분품,   group: 장비}
+  "381800": {label: 도핑 화학원소(웨이퍼), group: 소재}
+  "370790": {label: 감광재료(PR 등), group: 소재}
+
+countries: [CN, HK, TW, US, VN, JP, SG, MY, PH, DE, NL]
+
+notes: |
+  코드 미검증. 특히 소부장(장비·소재) 쪽은 신고 실무에서 어디에 실리는지 확인이 필요하다.
+  active 승격 전에 반드시:
+    python scripts/discover_hs.py --mode where --hs 848620 --sido 경기 충북 충남 경북 --start 202401
+  으로 금액이 실제로 잡히는지, 어느 시군구에 집중되는지 확인할 것.

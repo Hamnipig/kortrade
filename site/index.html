@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>수출 섹터 로테이션</title>
+<meta name="description" content="관세청 시군구별 수출 데이터로 섹터·카테고리 비중 이동을 추적합니다.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#f4f4f1; --surface:#fbfbfa; --surface-2:#f0f0ec;
+  --ink:#0d0f0e; --ink-2:#4e5250; --ink-3:#868a86;
+  --grid:#e2e2db; --axis:#c4c5bd; --rule:rgba(13,15,14,.10);
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4;
+  --pos:#2a78d6; --neg:#e34948; --mid:#a8a9a2;
+  --good:#0ca30c; --crit:#d03b3b;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:"IBM Plex Sans KR",system-ui,-apple-system,"Segoe UI",sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0e100f; --surface:#171917; --surface-2:#1f221f;
+  --ink:#f3f4f1; --ink-2:#b9bdb8; --ink-3:#83877f;
+  --grid:#282b28; --axis:#3a3e3a; --rule:rgba(243,244,241,.12);
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181;
+  --pos:#3987e5; --neg:#e66767; --mid:#6d716b;
+  --good:#0ca30c; --crit:#e05c5c; color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0e100f; --surface:#171917; --surface-2:#1f221f;
+  --ink:#f3f4f1; --ink-2:#b9bdb8; --ink-3:#83877f;
+  --grid:#282b28; --axis:#3a3e3a; --rule:rgba(243,244,241,.12);
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181;
+  --pos:#3987e5; --neg:#e66767; --mid:#6d716b;
+  --good:#0ca30c; --crit:#e05c5c; color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;
+  line-height:1.55;-webkit-font-smoothing:antialiased}
+img{max-width:100%}
+.wrap{max-width:1180px;margin:0 auto;padding-inline:16px;padding-block:26px 48px}
+
+.head{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between;
+  padding-bottom:14px;border-bottom:1px solid var(--rule)}
+.eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);
+  font-weight:600;margin:0 0 4px}
+h1{font-size:clamp(21px,3.4vw,29px);line-height:1.15;margin:0;font-weight:700;
+  letter-spacing:-.015em;text-wrap:balance}
+.sub{color:var(--ink-2);font-size:13px;margin:6px 0 0;max-width:62ch}
+.meta{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);text-align:right;line-height:1.7}
+.meta b{color:var(--ink-2);font-weight:500}
+
+/* tabs */
+.tabs{display:flex;gap:2px;flex-wrap:wrap;margin:18px 0 20px;border-bottom:1px solid var(--rule)}
+.tab{background:none;border:0;border-bottom:2px solid transparent;padding:9px 14px 10px;
+  font-family:var(--sans);font-size:13.5px;font-weight:500;color:var(--ink-3);cursor:pointer;
+  display:inline-flex;align-items:baseline;gap:7px;margin-bottom:-1px}
+.tab:hover{color:var(--ink-2)}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--s1);font-weight:600}
+.tab .tnum{font-family:var(--mono);font-size:11px;color:var(--ink-3)}
+.tab[disabled]{cursor:not-allowed;opacity:.45}
+.tab:focus-visible{outline:2px solid var(--s1);outline-offset:-2px;border-radius:2px}
+
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(178px,1fr));gap:1px;
+  background:var(--rule);border:1px solid var(--rule);border-radius:3px;overflow:hidden;margin-bottom:20px}
+.stat{background:var(--surface);padding:14px 16px 15px}
+.stat .k{font-size:11px;color:var(--ink-3);font-weight:600;letter-spacing:.04em;margin-bottom:7px}
+.stat .v{font-family:var(--mono);font-size:25px;font-weight:600;letter-spacing:-.02em;line-height:1}
+.stat .d{font-size:11.5px;color:var(--ink-2);margin-top:7px;font-family:var(--mono)}
+.up{color:var(--good)}.down{color:var(--crit)}
+
+.panels{display:grid;grid-template-columns:repeat(12,1fr);gap:16px}
+.panel{background:var(--surface);border:1px solid var(--rule);border-radius:3px;
+  padding:16px 16px 14px;min-width:0;display:flex;flex-direction:column}
+.p7{grid-column:span 7}.p5{grid-column:span 5}.p12{grid-column:span 12}
+@media(max-width:860px){.p7,.p5{grid-column:span 12}}
+.ptitle{font-size:14.5px;font-weight:600;margin:0;letter-spacing:-.01em}
+.pnote{font-size:11.5px;color:var(--ink-3);margin:4px 0 12px;line-height:1.5}
+.phead{display:flex;gap:10px;align-items:baseline;justify-content:space-between;flex-wrap:wrap}
+.unit{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);white-space:nowrap}
+
+.legend{display:flex;flex-wrap:wrap;gap:12px;margin:2px 0 10px}
+.lg{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-2);
+  background:none;border:0;padding:0;cursor:pointer;font-family:var(--sans)}
+.lg:focus-visible{outline:2px solid var(--s1);outline-offset:2px;border-radius:2px}
+.sw{width:11px;height:11px;border-radius:2px;flex:none}
+.lg[aria-pressed="false"]{opacity:.35}
+
+svg{display:block;width:100%;height:auto;overflow:visible}
+.gl{stroke:var(--grid);stroke-width:1}
+.ax{stroke:var(--axis);stroke-width:1}
+.tk{fill:var(--ink-3);font-size:10px;font-family:var(--mono)}
+.dlab{fill:var(--ink);font-size:11px;font-weight:600;font-family:var(--sans)}
+.dlab2{fill:var(--ink-2);font-size:10px;font-family:var(--mono)}
+
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+.tscroll{overflow-x:auto}
+th{text-align:right;font-weight:600;color:var(--ink-3);font-size:10.5px;letter-spacing:.05em;
+  padding:7px 9px;border-bottom:1px solid var(--rule);white-space:nowrap}
+th.l,td.l{text-align:left}
+td{padding:7px 9px;border-bottom:1px solid var(--rule);font-family:var(--mono);text-align:right;
+  white-space:nowrap;font-variant-numeric:tabular-nums}
+td.l{font-family:var(--sans)}
+tbody tr:hover td{background:var(--surface-2)}
+tbody tr.newcat td{border-top:1px solid var(--rule)}
+.catcell{font-weight:600}
+.chip{display:inline-block;font-family:var(--mono);font-size:10.5px;padding:1px 6px;
+  border-radius:2px;border:1px solid var(--rule);color:var(--ink-2)}
+.chip.up{color:var(--good);border-color:color-mix(in srgb,var(--good) 35%,transparent)}
+.chip.down{color:var(--crit);border-color:color-mix(in srgb,var(--crit) 35%,transparent)}
+.spark{width:78px;height:20px;display:block}
+.warn{background:var(--surface-2);border-left:2px solid var(--s4);padding:9px 12px;
+  font-size:11.5px;color:var(--ink-2);border-radius:0 3px 3px 0;margin-top:12px;line-height:1.55}
+
+.empty{background:var(--surface);border:1px solid var(--rule);border-radius:3px;
+  padding:34px 22px;text-align:center;color:var(--ink-2)}
+.empty h3{margin:0 0 8px;font-size:16px;color:var(--ink);font-weight:600}
+.empty p{margin:0 auto;max-width:56ch;font-size:13px;line-height:1.7}
+.empty code{font-family:var(--mono);font-size:12px;background:var(--surface-2);
+  padding:2px 6px;border-radius:2px;display:inline-block;margin-top:10px}
+
+#tip{position:fixed;pointer-events:none;z-index:50;background:var(--surface);color:var(--ink);
+  border:1px solid var(--rule);border-radius:3px;padding:7px 10px;font-size:11.5px;
+  box-shadow:0 4px 16px rgba(0,0,0,.14);font-family:var(--mono);line-height:1.6;max-width:240px}
+#tip[hidden]{display:none}
+#tip b{font-family:var(--sans);font-size:12px}
+
+.foot{margin-top:26px;padding-top:14px;border-top:1px solid var(--rule);font-size:11.5px;
+  color:var(--ink-3);line-height:1.7}
+.foot code{font-family:var(--mono);font-size:11px;background:var(--surface-2);
+  padding:1px 5px;border-radius:2px}
+.toggle{background:var(--surface-2);border:1px solid var(--rule);color:var(--ink-2);
+  font-family:var(--sans);font-size:11.5px;padding:4px 10px;border-radius:2px;cursor:pointer}
+.toggle:hover{color:var(--ink)}
+.toggle:focus-visible{outline:2px solid var(--s1);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="head">
+    <div>
+      <p class="eyebrow">관세청 시군구별 품목별 수출입실적</p>
+      <h1>수출 섹터 로테이션</h1>
+      <p class="sub">통관 데이터를 시군구 단위로 전수 수집해, 어느 카테고리가 비중을 가져가고
+        어느 지역이 그 변화를 끌고 있는지 추적합니다. 매월 관세청 공표 직후 자동 갱신됩니다.</p>
+    </div>
+    <div class="meta" id="meta"></div>
+  </header>
+
+  <div class="tabs" id="tabs" role="tablist"></div>
+  <div id="view"></div>
+
+  <p class="foot" id="foot"></p>
+</div>
+<div id="tip" hidden></div>
+
+<script>
+const SER = ["--s1","--s2","--s3","--s4","--s5"];
+const NS = "http://www.w3.org/2000/svg";
+const cv = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const el = (t,a={}) => { const e=document.createElementNS(NS,t); for(const k in a) e.setAttribute(k,a[k]); return e; };
+const fm = n => n>=1000 ? Math.round(n).toLocaleString() : (n>=100 ? Math.round(n) : n.toFixed(1));
+const pct = n => n==null ? "–" : (n>0?"+":"") + n.toFixed(Math.abs(n)>=100?0:1) + "%";
+const pp  = n => n==null ? "–" : (n>0?"+":"") + n.toFixed(2) + "%p";
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+const tip = document.getElementById("tip");
+function showTip(ev, html){
+  tip.innerHTML = html; tip.hidden = false;
+  const r = tip.getBoundingClientRect();
+  let x = ev.clientX + 14, y = ev.clientY - r.height - 12;
+  if (x + r.width > innerWidth - 8) x = ev.clientX - r.width - 14;
+  if (y < 8) y = ev.clientY + 16;
+  tip.style.left = x+"px"; tip.style.top = y+"px";
+}
+const hideTip = () => { tip.hidden = true; };
+addEventListener("scroll", hideTip, {passive:true});
+
+let MANIFEST = null, CUR = null, CACHE = {};
+
+/* ================= charts ================= */
+function drawMap(mount, S){
+  const W=620,H=400,M={t:16,r:24,b:40,l:52}, iw=W-M.l-M.r, ih=H-M.t-M.b;
+  const cats = S.cats.filter(c => c.yoy!=null && c.share_chg!=null);
+  if (!cats.length){ mount.innerHTML = '<p class="pnote">전년 동기 비교가 가능한 12개월 이상 데이터가 아직 없습니다.</p>'; return; }
+  const xs=cats.map(c=>c.yoy), ys=cats.map(c=>c.share_chg);
+  const x0=Math.min(-20,Math.min(...xs)-10), x1=Math.max(...xs)+14;
+  // 비중변화가 전부 0 근처일 때 축을 거기 맞추면 노이즈를 로테이션으로 오독한다 → 하한 ±0.5%p
+  const Y_FLOOR=0.5;
+  const yA=Math.max(Math.max(...ys.map(Math.abs))*1.25, Y_FLOOR);
+  const X=v=>M.l+(v-x0)/(x1-x0)*iw, Y=v=>M.t+(yA-v)/(2*yA)*ih;
+  const vmax=Math.max(...cats.map(c=>c.ytd))||1;
+  const R=v=>6+Math.sqrt(Math.max(v,0)/vmax)*44;
+  const big=new Set([...cats].sort((a,b)=>b.ytd-a.ytd).slice(0,3).map(c=>c.hs));
+
+  const s=el("svg",{viewBox:`0 0 ${W} ${H}`,role:"img",
+    "aria-label":"카테고리 로테이션 산점도. 가로축 전년 대비 성장률, 세로축 섹터 내 비중 변화."});
+  s.appendChild(el("rect",{x:X(0),y:M.t,width:Math.max(0,M.l+iw-X(0)),height:ih/2,fill:cv("--s1"),opacity:.045}));
+  s.appendChild(el("rect",{x:M.l,y:M.t+ih/2,width:Math.max(0,X(0)-M.l),height:ih/2,fill:cv("--neg"),opacity:.05}));
+
+  const step = yA>4 ? 2 : (yA>1.5 ? 1 : 0.5);
+  for(let gy=-Math.ceil(yA/step)*step; gy<=yA; gy+=step){
+    if(Math.abs(gy)>yA) continue;
+    s.appendChild(el("line",{x1:M.l,x2:M.l+iw,y1:Y(gy),y2:Y(gy),class:gy===0?"ax":"gl"}));
+    const t=el("text",{x:M.l-9,y:Y(gy)+3.5,class:"tk","text-anchor":"end"});
+    t.textContent=(gy>0?"+":"")+ (Number.isInteger(gy)?gy:gy.toFixed(1)); s.appendChild(t);
+  }
+  for(let gx=Math.ceil(x0/20)*20; gx<=x1; gx+=20){
+    s.appendChild(el("line",{x1:X(gx),x2:X(gx),y1:M.t,y2:M.t+ih,class:gx===0?"ax":"gl"}));
+    const t=el("text",{x:X(gx),y:M.t+ih+18,class:"tk","text-anchor":"middle"});
+    t.textContent=gx+"%"; s.appendChild(t);
+  }
+  let t=el("text",{x:M.l+iw,y:M.t+ih+34,class:"tk","text-anchor":"end"});
+  t.textContent="전년 동기 대비 성장률 →"; s.appendChild(t);
+  t=el("text",{x:M.l-9,y:M.t-4,class:"tk","text-anchor":"end"});
+  t.textContent="비중변화 %p"; s.appendChild(t);
+
+  const placed=[];
+  for(const c of [...cats].sort((a,b)=>b.ytd-a.ytd)){
+    const cx=X(c.yoy), cy=Y(c.share_chg), r=R(c.ytd);
+    const col = c.share_chg>0.02 ? cv("--pos") : (c.share_chg<-0.02 ? cv("--neg") : cv("--mid"));
+    const g=el("g",{tabindex:"0",role:"group",
+      "aria-label":`${c.name}: 성장률 ${pct(c.yoy)}, 비중변화 ${pp(c.share_chg)}, ${fm(c.ytd)}백만달러`});
+    g.appendChild(el("circle",{cx,cy,r,fill:col,"fill-opacity":.2,stroke:col,"stroke-width":2}));
+    let two=big.has(c.hs);
+    const up=r+(two?20:8);
+    let ly=(cy-up<M.t+12)?cy+r+18:cy-up, tries=0;
+    const clash=y=>placed.some(p=>Math.abs(p.x-cx)<52 && Math.abs(p.y-y)<15);
+    while(clash(ly) && tries<12){
+      const d=Math.ceil((tries+1)/2)*19;
+      ly = tries%2 ? cy+r+18+d : cy-up-d;
+      if(ly<M.t+12) ly=cy+r+18+d;
+      if(ly>M.t+ih-6) ly=cy-up-d;
+      tries++;
+    }
+    if(clash(ly)) two=false;          // 끝내 자리가 없으면 값 줄은 접고 이름만
+    placed.push({x:cx,y:ly});
+    const t1=el("text",{x:cx,y:ly,class:"dlab","text-anchor":"middle"});
+    t1.textContent=c.name; g.appendChild(t1);
+    if(two){ const t2=el("text",{x:cx,y:ly+12,class:"dlab2","text-anchor":"middle"});
+      t2.textContent="$"+fm(c.ytd)+"M"; g.appendChild(t2); }
+    const html=`<b>${esc(c.name)}</b> (HS ${c.hs})<br>$${fm(c.ytd)}M · 비중 ${c.share?.toFixed(1)??"–"}%
+      <br>YoY ${pct(c.yoy)} → 최근 ${pct(c.q3)}<br>비중변화 ${pp(c.share_chg)} · 가속 ${pp(c.accel)}`;
+    g.addEventListener("pointermove",e=>showTip(e,html));
+    g.addEventListener("pointerleave",hideTip);
+    g.addEventListener("focus",()=>{const b=g.getBoundingClientRect();
+      showTip({clientX:b.left+b.width/2,clientY:b.top},html)});
+    g.addEventListener("blur",hideTip);
+    s.appendChild(g);
+  }
+  let q=el("text",{x:M.l+iw-4,y:M.t+14,class:"tk","text-anchor":"end"});
+  q.textContent="몫을 키우며 성장"; s.appendChild(q);
+  q=el("text",{x:M.l+6,y:M.t+ih-8,class:"tk"});
+  q.textContent="밀려나는 축"; s.appendChild(q);
+  mount.replaceChildren(s);
+}
+
+function lineChart(mount, months, series, o){
+  const W=o.w||980,H=o.h||260,M={t:12,r:o.padR??58,b:28,l:o.padL??46};
+  const iw=W-M.l-M.r, ih=H-M.t-M.b, n=months.length;
+  const live=series.filter(s=>!s.off);
+  const vals=live.flatMap(s=>s.v).filter(v=>v!=null);
+  if(!vals.length){ mount.innerHTML=""; return; }
+  let lo=o.zero?0:Math.min(...vals), hi=Math.max(...vals);
+  const padv=(hi-lo)*0.12||1; hi+=padv; if(!o.zero) lo-=padv;
+  const X=i=>M.l+(n===1?iw/2:i/(n-1)*iw), Y=v=>M.t+(hi-v)/(hi-lo)*ih;
+
+  const s=el("svg",{viewBox:`0 0 ${W} ${H}`,role:"img","aria-label":o.label||""});
+  for(let i=0;i<=4;i++){
+    const v=lo+(hi-lo)*i/4;
+    s.appendChild(el("line",{x1:M.l,x2:M.l+iw,y1:Y(v),y2:Y(v),class:"gl"}));
+    const t=el("text",{x:M.l-8,y:Y(v)+3.5,class:"tk","text-anchor":"end"});
+    t.textContent=o.fmtY?o.fmtY(v):Math.round(v); s.appendChild(t);
+  }
+  months.forEach((m,i)=>{
+    if(!m.endsWith("-01")&&!m.endsWith("-07")) return;
+    const t=el("text",{x:X(i),y:M.t+ih+17,class:"tk","text-anchor":"middle"});
+    t.textContent=m.slice(2).replace("-","."); s.appendChild(t);
+  });
+  s.appendChild(el("line",{x1:M.l,x2:M.l+iw,y1:M.t+ih,y2:M.t+ih,class:"ax"}));
+
+  live.forEach(sr=>{
+    const pts=sr.v.map((v,i)=>v==null?null:[X(i),Y(v)]).filter(Boolean);
+    if(!pts.length) return;
+    s.appendChild(el("path",{d:"M"+pts.map(p=>p.join(" ")).join("L"),fill:"none",
+      stroke:cv(sr.c),"stroke-width":2,"stroke-linejoin":"round","stroke-linecap":"round"}));
+    const last=pts[pts.length-1];
+    s.appendChild(el("circle",{cx:last[0],cy:last[1],r:4,fill:cv(sr.c),
+      stroke:cv("--surface"),"stroke-width":2}));
+    const t=el("text",{x:last[0]+9,y:last[1]+3.5,class:"dlab2"});
+    t.textContent=sr.name; s.appendChild(t);
+  });
+  const cross=el("line",{x1:0,x2:0,y1:M.t,y2:M.t+ih,class:"ax",opacity:"0"});
+  s.appendChild(cross);
+  const hit=el("rect",{x:M.l,y:M.t,width:iw,height:ih,fill:"transparent"});
+  s.appendChild(hit);
+  hit.addEventListener("pointermove",ev=>{
+    const bb=s.getBoundingClientRect();
+    let i=Math.round(((ev.clientX-bb.left)/bb.width*W-M.l)/iw*(n-1));
+    i=Math.max(0,Math.min(n-1,i));
+    cross.setAttribute("x1",X(i)); cross.setAttribute("x2",X(i)); cross.setAttribute("opacity",".7");
+    showTip(ev,`<b>${months[i]}</b><br>`+live.map(sr=>
+      `<span style="color:${cv(sr.c)}">■</span> ${esc(sr.name)} ${
+        sr.v[i]==null?"–":(o.fmtT?o.fmtT(sr.v[i]):fm(sr.v[i]))}`).join("<br>"));
+  });
+  hit.addEventListener("pointerleave",()=>{cross.setAttribute("opacity","0");hideTip()});
+  mount.replaceChildren(s);
+}
+
+function sparkSVG(v, col){
+  const w=78,h=20,lo=Math.min(...v),hi=Math.max(...v);
+  const X=i=>i/(v.length-1)*(w-2)+1, Y=x=>h-2-(hi===lo?0.5:(x-lo)/(hi-lo))*(h-5);
+  const d="M"+v.map((x,i)=>`${X(i).toFixed(1)} ${Y(x).toFixed(1)}`).join("L");
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" aria-hidden="true">
+    <path d="${d}" fill="none" stroke="var(${col})" stroke-width="1.5"
+      stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${X(v.length-1).toFixed(1)}" cy="${Y(v[v.length-1]).toFixed(1)}" r="2.2"
+      fill="var(${col})"/></svg>`;
+}
+
+/* ================= render a sector ================= */
+const ma3 = a => a.map((_,i)=> i<2 ? null : +((a[i]+a[i-1]+a[i-2])/3).toFixed(2));
+let showAll = false;
+
+function renderSector(S){
+  const dom = S.cats.find(c=>c.hs===S.dominant);
+  const domShare = dom?.share ?? 0;
+  const splitMode = !!S.split && domShare >= 60;
+  const rest = S.cats.filter(c=>!dom || c.hs!==dom.hs);
+  const fastest = [...S.cats].filter(c=>c.yoy!=null && c.ytd>=S.totals.ytd*0.003)
+    .sort((a,b)=>b.yoy-a.yoy)[0];
+  const shrink = [...S.cats].filter(c=>c.share_chg!=null).sort((a,b)=>a.share_chg-b.share_chg)[0];
+
+  const statsHTML = [
+    [`${esc(S.name)} 수출`, "$"+fm(S.totals.ytd)+"M",
+     `<span class="${S.totals.yoy>0?'up':'down'}">${pct(S.totals.yoy)}</span> · 최근 ${S.window}개월`],
+    dom ? ["최대 카테고리", esc(dom.name),
+      `${dom.share?.toFixed(1)}% · <span class="${dom.share_chg>0?'up':'down'}">${pp(dom.share_chg)}</span>`] : null,
+    fastest ? ["최고 성장", esc(fastest.name),
+      `<span class="${fastest.yoy>0?'up':'down'}">${pct(fastest.yoy)}</span> · $${fm(fastest.ytd)}M`] : null,
+    shrink ? ["최대 비중 축소", esc(shrink.name),
+      `<span class="down">${pp(shrink.share_chg)}</span> · YoY ${pct(shrink.yoy)}`] : null,
+  ].filter(Boolean).map(([k,v,d]) =>
+    `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div><div class="d">${d}</div></div>`).join("");
+
+  document.getElementById("view").innerHTML = `
+    <div class="stats">${statsHTML}</div>
+    <div class="panels">
+      <section class="panel p7">
+        <div class="phead"><h2 class="ptitle">로테이션 맵</h2>
+          <span class="unit">버블 = 최근 ${S.window}개월 규모</span></div>
+        <p class="pnote">가로축은 성장률, 세로축은 <b>섹터 내 비중 변화</b>. 오른쪽 위 = 자기 몫을
+          키우며 크는 축, 왼쪽 아래 = 밀려나는 축.</p>
+        <div id="map"></div>
+      </section>
+      <section class="panel p5">
+        <div class="phead"><h2 class="ptitle">${splitMode?esc(S.split.domName)+" vs 그 외":"카테고리 비중"}</h2>
+          <span class="unit">${splitMode?"기준월 = 100 · 3개월 이동평균":"최근 "+S.window+"개월"}</span></div>
+        <p class="pnote" id="p2note"></p>
+        <div class="legend" id="lg-idx"></div>
+        <div id="idx"></div>
+      </section>
+      <section class="panel p12">
+        <div class="phead"><h2 class="ptitle">카테고리별 월별 추이</h2>
+          <span class="unit">백만 USD · 3개월 이동평균</span></div>
+        <p class="pnote" id="p3note"></p>
+        <div class="legend" id="lg-nb"></div>
+        <div id="nb"></div>
+      </section>
+      <section class="panel p12">
+        <div class="phead"><h2 class="ptitle">카테고리별 상위 수출 시군구</h2>
+          <button class="toggle" id="tv" type="button" aria-pressed="false">표 전체 보기</button></div>
+        <p class="pnote">수출신고서의 <b>제조장소 주소</b> 기준입니다. 공장 위치가 아니라 신고 주소이므로,
+          브랜드사 본사일 수도 생산 공장일 수도 있습니다.</p>
+        <div class="tscroll"><table id="tbl"></table></div>
+        ${S.breakWarning ? `<p class="warn">${esc(S.breakWarning)} — 이 사이트는 개편 전후 시군구를 병합해 표시합니다.</p>` : ""}
+      </section>
+    </div>`;
+
+  drawMap(document.getElementById("map"), S);
+
+  // panel 2
+  let idxSeries;
+  if (splitMode){
+    document.getElementById("p2note").innerHTML =
+      `${esc(S.split.domName)}가 ${domShare.toFixed(0)}%라 같은 축에 못 올립니다. 첫 달을 100으로 지수화했습니다.`;
+    idxSeries = [
+      {name:S.split.domName, c:"--s1", v:ma3(S.split.domIdx)},
+      {name:"그 외",         c:"--s2", v:ma3(S.split.restIdx)},
+    ];
+  } else {
+    document.getElementById("p2note").textContent = "상위 카테고리의 최근 추이입니다.";
+    idxSeries = S.cats.slice(0,3).map((c,i)=>({name:c.name, c:SER[i], v:ma3(c.m)}));
+  }
+  document.getElementById("lg-idx").innerHTML = idxSeries.map(s=>
+    `<span class="lg"><span class="sw" style="background:var(${s.c})"></span>${esc(s.name)}</span>`).join("");
+  lineChart(document.getElementById("idx"), S.months, idxSeries,
+    {w:520,h:250,padR:62,zero:!splitMode,label:"추이",
+     fmtY:v=>splitMode?Math.round(v):"$"+Math.round(v)+"M",
+     fmtT:v=>splitMode?v.toFixed(0):"$"+v.toFixed(1)+"M"});
+
+  // panel 3
+  const nbCats = (splitMode ? rest : S.cats).slice(0,5);
+  document.getElementById("p3note").textContent = splitMode
+    ? `${S.split.domName}(${domShare.toFixed(0)}%)를 빼야 나머지가 보입니다. 범례를 눌러 계열을 켜고 끌 수 있습니다.`
+    : "범례를 눌러 계열을 켜고 끌 수 있습니다.";
+  const nbSeries = nbCats.map((c,i)=>({name:c.name, c:SER[i], v:ma3(c.m), off:false}));
+  const drawNB = () => lineChart(document.getElementById("nb"), S.months, nbSeries,
+    {w:980,h:270,padR:82,zero:true,label:"카테고리 월별 수출 추이",
+     fmtY:v=>"$"+Math.round(v)+"M", fmtT:v=>"$"+v.toFixed(1)+"M"});
+  document.getElementById("lg-nb").innerHTML = nbSeries.map((s,i)=>
+    `<button class="lg" type="button" data-i="${i}" aria-pressed="true">
+      <span class="sw" style="background:var(${s.c})"></span>${esc(s.name)}</button>`).join("");
+  document.getElementById("lg-nb").addEventListener("click", e=>{
+    const b=e.target.closest(".lg"); if(!b) return;
+    const i=+b.dataset.i;
+    if(nbSeries.filter(s=>!s.off).length===1 && !nbSeries[i].off) return;
+    nbSeries[i].off=!nbSeries[i].off;
+    b.setAttribute("aria-pressed", String(!nbSeries[i].off));
+    drawNB();
+  });
+  drawNB();
+
+  // table
+  const drawTable = () => {
+    const rows=[];
+    S.cats.forEach(c=>{
+      (showAll ? c.places : c.places.slice(0,3)).forEach((p,pi)=>rows.push({c,p,pi}));
+    });
+    document.getElementById("tbl").innerHTML =
+      `<thead><tr><th class="l">카테고리</th><th class="l">시군구</th><th>${S.window}M $M</th>
+        <th>YoY</th><th>최근${S.recent}M</th><th>가속</th>
+        <th class="l">추이 (${S.months[0].slice(2)}–${S.months.at(-1).slice(2)})</th></tr></thead><tbody>` +
+      (rows.length ? rows.map(({c,p,pi})=>`<tr class="${pi===0?'newcat':''}">
+        <td class="l">${pi===0?`<span class="catcell">${esc(c.name)}</span> <span class="chip">${c.hs}</span>`:""}</td>
+        <td class="l">${esc(p.place)}</td>
+        <td>${p.ytd.toLocaleString()}</td>
+        <td class="${p.yoy>0?'up':'down'}">${p.yoy==null?"–":pct(p.yoy)}</td>
+        <td class="${p.q3>0?'up':'down'}">${p.q3==null?"–":pct(p.q3)}</td>
+        <td>${p.accel==null?"–":`<span class="chip ${p.accel>0?'up':'down'}">${p.accel>0?"+":""}${p.accel}%p</span>`}</td>
+        <td class="l">${sparkSVG(p.v,"--s1")}</td></tr>`).join("")
+        : `<tr><td class="l" colspan="7">표시할 시군구가 없습니다 (비교창 $1M 미만 제외).</td></tr>`) +
+      "</tbody>";
+  };
+  document.getElementById("tv").addEventListener("click", e=>{
+    showAll=!showAll;
+    e.target.textContent = showAll ? "상위 3곳만 보기" : "표 전체 보기";
+    e.target.setAttribute("aria-pressed", String(showAll));
+    drawTable();
+  });
+  drawTable();
+}
+
+function renderEmpty(entry){
+  document.getElementById("view").innerHTML = `
+    <div class="empty">
+      <h3>${esc(entry.name)} — 아직 수집 전입니다</h3>
+      <p>${esc(entry.reason || "데이터 없음")}.
+      ${entry.status === "draft"
+        ? "이 섹터는 HS 코드가 아직 검증되지 않아 수집에서 제외돼 있습니다. 어느 코드에 금액이 실제로 실리는지 역탐색으로 확인한 뒤, 설정의 <code>status</code>를 active로 올리면 다음 갱신부터 채워집니다."
+        : "다음 자동 갱신에서 채워집니다."}</p>
+      ${entry.status === "draft"
+        ? `<code>python scripts/discover_hs.py --mode where --hs &lt;HS6&gt; --sido 경기 충북</code>` : ""}
+    </div>`;
+}
+
+/* ================= shell ================= */
+function selectTab(key){
+  CUR = key; showAll = false;
+  location.hash = key;
+  [...document.querySelectorAll(".tab")].forEach(b =>
+    b.setAttribute("aria-selected", String(b.dataset.key === key)));
+  const entry = MANIFEST.sectors.find(s => s.key === key);
+  if (!entry) return;
+  if (!entry.ready){ renderEmpty(entry); return; }
+  if (CACHE[key]){ renderSector(CACHE[key]); return; }
+  document.getElementById("view").innerHTML = `<div class="empty"><p>불러오는 중…</p></div>`;
+  fetch(`data/${key}.json`, {cache:"no-cache"})
+    .then(r => { if(!r.ok) throw new Error(r.status); return r.json(); })
+    .then(d => { CACHE[key]=d; if(CUR===key) renderSector(d); })
+    .catch(err => { document.getElementById("view").innerHTML =
+      `<div class="empty"><h3>불러오지 못했습니다</h3><p>data/${esc(key)}.json — ${esc(err.message)}</p></div>`; });
+}
+
+fetch("data/manifest.json", {cache:"no-cache"})
+  .then(r => { if(!r.ok) throw new Error(r.status); return r.json(); })
+  .then(m => {
+    MANIFEST = m;
+    const ready = m.sectors.filter(s=>s.ready);
+    document.getElementById("meta").innerHTML =
+      `갱신 <b>${esc(m.generatedAt)}</b><br>` +
+      (ready[0]?.asOf ? `기준월 <b>${esc(ready[0].asOf)}</b><br>` : "") +
+      `단위 <b>백만 USD (FOB)</b>`;
+    document.getElementById("tabs").innerHTML = m.sectors.map(s=>
+      `<button class="tab" role="tab" data-key="${esc(s.key)}" aria-selected="false">
+        ${esc(s.name)}${s.ready?`<span class="tnum">$${fm(s.ytd)}M</span>`
+          :`<span class="tnum">미수집</span>`}</button>`).join("");
+    document.getElementById("tabs").addEventListener("click", e=>{
+      const b=e.target.closest(".tab"); if(b) selectTab(b.dataset.key);
+    });
+    document.getElementById("foot").innerHTML =
+      `출처: <b>${esc(m.source)}</b> · 금액은 신고 미화금액(FOB) 기준 · ` +
+      `원자료는 천 달러 단위이며 달러로 환산 · 공표는 매월 15일경, 전월까지 현행화되며 ` +
+      `<b>과거 월이 소급 정정</b>됩니다 · 관세청 시군구 API는 HS 6단위까지만 조회됩니다 · ` +
+      `수집 범위 ${esc(m.coverage?.region_trade?.from ?? "?")}–${esc(m.coverage?.region_trade?.to ?? "?")}, ` +
+      `${(m.coverage?.region_trade?.rows ?? 0).toLocaleString()}행 · ` +
+      `소급 정정 감지 ${(m.coverage?.revisions ?? 0).toLocaleString()}건`;
+    const want = location.hash.slice(1);
+    selectTab(m.sectors.find(s=>s.key===want)?.key || (ready[0]||m.sectors[0])?.key);
+  })
+  .catch(err => {
+    document.getElementById("view").innerHTML = `
+      <div class="empty">
+        <h3>아직 데이터가 없습니다</h3>
+        <p>첫 수집이 끝나면 이 자리에 대시보드가 나타납니다. GitHub Actions의
+        <b>Update trade data</b> 워크플로를 수동 실행하거나, 매월 17일 예약 실행을 기다리세요.</p>
+        <code>python scripts/run_update.py --sectors all &amp;&amp; python scripts/build_site.py</code>
+      </div>`;
+    document.getElementById("meta").textContent = "";
+  });
+
+const reflow = () => { if (CUR && CACHE[CUR]) renderSector(CACHE[CUR]); };
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", reflow);
+addEventListener("hashchange", () => {
+  const k = location.hash.slice(1);
+  if (k && k !== CUR && MANIFEST?.sectors.some(s=>s.key===k)) selectTab(k);
+});
+</script>
+</body>
+</html>

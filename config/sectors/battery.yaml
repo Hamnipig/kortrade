@@ -1,0 +1,22 @@
+key: battery
+name: 2차전지·ESS
+subtitle: HS 8507 · 셀/소재
+status: draft               # ★ HS 코드 미검증
+order: 3
+
+dominant: "850760"          # 리튬이온 축전지
+
+categories:
+  "850760": {label: 리튬이온 축전지, group: 셀}
+  "850790": {label: 축전지 부분품,   group: 셀}
+  "284190": {label: 기타 금속산염(양극재 추정), group: 소재}
+  "380110": {label: 인조흑연(음극재 추정),     group: 소재}
+  "282520": {label: 리튬 산화물·수산화물,      group: 소재}
+  "392099": {label: 기타 플라스틱 시트(분리막 추정), group: 소재}
+
+countries: [US, HU, PL, CN, DE, VN, MY, JP, TW, CZ]
+
+notes: |
+  코드 미검증. 양극재·음극재·분리막은 HS 분류가 실무마다 갈려 가장 불확실한 영역이다.
+  포항(에코프로)·청주(LG엔솔)·오창·구미 등 알려진 생산지에서 역탐색해 코드를 먼저 확정할 것:
+    python scripts/discover_hs.py --mode what --sido 경북 충북 --sigungu 포항시 --start 202301

@@ -1,0 +1,129 @@
+# 관세청 수출입무역통계 OpenAPI 엔드포인트 정의
+# 출처: 공공데이터포털(data.go.kr) 각 API 상세페이지의 Swagger 명세 (2026-09 확인)
+# 원 백엔드: https://unipass.customs.go.kr/gxt/rest/tradeStats/*
+#
+# 공통 사항
+#  - 응답 포맷: XML
+#  - 공표주기: 1개월 / 공표시기: 매월 15일경 (전월까지 자료 현행화)
+#  - 정정/취하 반영으로 과거 월 데이터가 소급 변경됨 → 최근 N개월 재수집 필요
+#  - 개발계정 트래픽: 일 10,000건
+#  - 금액 기준: 수입 CIF(과세가격미화금액), 수출 FOB(신고미화금액), 단위 USD
+#  - 기준일: 수리일(신고수리일) 기준
+
+host: https://apis.data.go.kr
+prefix: /1220000
+
+# 1회 호출당 최대 조회 기간(개월). 관세청 기술문서상 "조회기간 1년 이내".
+max_months_per_call: 12
+
+endpoints:
+
+  # [섹터 레이어] 전국 품목별 x 국가별 수출입실적
+  # data.go.kr/data/15100475
+  item_country:
+    path: /nitemtrade/getNitemtradeList
+    doc: https://www.data.go.kr/data/15100475/openapi.do
+    params:
+      serviceKey: {required: true}
+      strtYymm:   {required: true,  desc: "시작년월 YYYYMM"}
+      endYymm:    {required: true,  desc: "종료년월 YYYYMM"}
+      hsSgn:      {required: false, desc: "HS부호 2/4/6/10단위"}
+      cntyCd:     {required: true,  desc: "국가코드 2자리 (예: US). 'TOTAL'=전체"}
+    item_fields:
+      year:        period          # "2016.01"
+      statCd:      country_code
+      statCdCntnKor1: country_name
+      hsCd:        hs_code
+      statKor:     hs_name
+      expWgt:      exp_wgt
+      expDlr:      exp_usd
+      impWgt:      imp_wgt
+      impDlr:      imp_usd
+      balPayments: bal_usd
+
+  # [섹터 레이어 보조] 전국 품목별 수출입실적 (국가 구분 없음)
+  # data.go.kr/data/15101609
+  item:
+    path: /Itemtrade/getItemtradeList
+    doc: https://www.data.go.kr/data/15101609/openapi.do
+    params:
+      serviceKey: {required: true}
+      strtYymm:   {required: true}
+      endYymm:    {required: true}
+      hsSgn:      {required: false, desc: "HS부호. 생략 시 전체"}
+    item_fields:
+      year:        period
+      hsCode:      hs_code
+      statKor:     hs_name
+      expWgt:      exp_wgt
+      expDlr:      exp_usd
+      impWgt:      imp_wgt
+      impDlr:      imp_usd
+      balPayments: bal_usd
+
+  # [기업 레이어] 시군구별 x 품목별 수출입실적  ★핵심
+  # data.go.kr/data/15134343
+  # 주의: HsSgn 파라미터명 첫 글자 대문자 H. HS 6단위만 허용. sidoCd 필수.
+  #       수출은 「제조장소 우편번호」 기준 집계 → 공장 소재지 기반 프록시가 성립하는 근거
+  sigungu_item:
+    path: /sigunguperprlstperacrs/getSigunguPerPrlstPerAcrs
+    doc: https://www.data.go.kr/data/15134343/openapi.do
+    params:
+      serviceKey: {required: true}
+      strtYymm:   {required: true}
+      endYymm:    {required: true}
+      HsSgn:      {required: true,  desc: "HS부호 **6단위만** (예: 330499)"}
+      # ★ 10단위를 넣으면 resultCode 99 '품목코드는 6자리로 입력해야 합니다' (2026-09 실측).
+      #   따라서 이 API 로는 HSK 10단위 분해가 불가능하다.
+      #   10단위 지역 데이터가 필요하면 한국무역협회 K-stat(stat.kita.net)을 써야 한다.
+      #   증권사 리포트가 '강릉시 HS 3304.99.9000' 같은 10단위를 쓰는 것은 KITA 경유다.
+      sidoCd:     {required: true,  desc: "시도코드 2자리 (예: 11)"}
+    item_fields:
+      priodTitle:  period
+      sggNm:       sigungu_name
+      hsSgn:       hs_code
+      korePrlstNm: hs_name
+      expCnt:      exp_cnt
+      expUsdAmt:   exp_usd
+      impCnt:      imp_cnt
+      impUsdAmt:   imp_usd
+      cmtrBlncAmt: bal_usd
+
+  # [지역 레이어] 시도별 x 품목별
+  # data.go.kr/data/15101641
+  sido_item:
+    path: /sidoitemtrade/getSidoitemtradeList
+    doc: https://www.data.go.kr/data/15101641/openapi.do
+    params:
+      serviceKey: {required: true}
+      strtYymm:   {required: true}
+      endYymm:    {required: true}
+      sidoCd:     {required: true}
+      hsSgn:      {required: false}
+    item_fields:
+      priodTitle:  period
+      sidoNm:      sido_name
+      hsSgn:       hs_code
+      korePrlstNm: hs_name
+      expUsdAmt:   exp_usd
+      impUsdAmt:   imp_usd
+      cmtrBlncAmt: bal_usd
+
+  # [코드 탐색용] 시도별 수출입실적 (sidoCd 옵션)
+  # data.go.kr/data/15101643 — 시도코드 자동 탐색에 사용
+  sido:
+    path: /sidotrade/getSidotradeList
+    doc: https://www.data.go.kr/data/15101643/openapi.do
+    params:
+      serviceKey: {required: true}
+      strtYymm:   {required: true}
+      endYymm:    {required: true}
+      sidoCd:     {required: false}
+    item_fields:
+      priodTitle:  period
+      sidoNm:      sido_name
+      expCnt:      exp_cnt
+      expUsdAmt:   exp_usd
+      impCnt:      imp_cnt
+      impUsdAmt:   imp_usd
+      cmtrBlncAmt: bal_usd

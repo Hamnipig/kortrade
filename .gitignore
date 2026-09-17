@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+logs/*.log
+.DS_Store
+# data/kortrade.sqlite 는 일부러 커밋한다 —
+# 커밋해야 다음 실행이 fetch_log 로 확정 구간을 건너뛴다(안 그러면 매달 전량 재수집).
