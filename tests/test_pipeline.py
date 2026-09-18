@@ -582,6 +582,27 @@ def test_bootstrap_does_not_bruteforce_all_codes():
     print("  ✓ 부트스트랩 전수탐색 금지 + API 실패 시 내장표 폴백")
 
 
+def test_sido_short_names_do_not_collide():
+    """표시용 축약이 서로 다른 시도를 같은 이름으로 뭉개면 안 된다.
+
+    실측 회귀: 사이트 표가 sido_name[:2] 로 잘라 '경상북도'·'경상남도'가 모두
+    '경상'이 됐다. '경상 성주군'(실제로는 경상북도)처럼 지역을 오인하게 만든다.
+    """
+    from kortrade.codes import canon_sido
+
+    pairs = [("경상북도", "경상남도"), ("충청남도", "충청북도"),
+             ("전라남도", "전북특별자치도")]
+    for a, b in pairs:
+        assert canon_sido(a) != canon_sido(b), f"{a}/{b} 가 같은 축약으로 뭉개졌다"
+
+    exact = {"경상북도": "경북", "경상남도": "경남", "충청남도": "충남",
+             "강원특별자치도": "강원", "서울특별시": "서울",
+             "전남광주통합특별시": "전남광주"}
+    for full, short in exact.items():
+        assert canon_sido(full) == short, f"{full} -> {canon_sido(full)} (기대 {short})"
+    print("  ✓ 시도 축약 충돌 없음 (경북/경남 오표기 회귀)")
+
+
 def test_empty_db_file_is_not_mistaken_for_bootstrapped():
     """빈 DB 파일이 '이미 부트스트랩됨'으로 오판되면 안 된다.
 
