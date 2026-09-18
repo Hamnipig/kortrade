@@ -196,6 +196,12 @@ tbody tr.newcat td{border-top:1px solid var(--rule)}
 .subtab .tnum{font-family:var(--mono);font-size:10.5px}
 .subtab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--s1);font-weight:600}
 .subtab:focus-visible{outline:2px solid var(--s1);outline-offset:2px}
+
+.wt th.sortable{cursor:pointer;user-select:none}
+.wt th.sortable:hover{color:var(--ink)}
+.wt th.sorted{color:var(--ink);font-weight:600}
+.wt th.sortable:focus-visible{outline:2px solid var(--s1);outline-offset:-2px}
+.pu.warn{border-color:var(--s4);color:var(--s4)}
 </style>
 </head>
 <body>
@@ -537,37 +543,63 @@ function renderEmpty(entry){
 }
 
 /* ================= 유니버스 랭킹 ================= */
-let UNI = null, uniSort = "accelUp", uniQ = "";
-const SORTS = {
-  accelUp:   {t:"가속 ↑",      f:(a,b)=>(b.accel??-1e9)-(a.accel??-1e9)},
-  accelDown: {t:"가속 ↓",      f:(a,b)=>(a.accel??1e9)-(b.accel??1e9)},
-  qTurn:     {t:"물량 턴어라운드", f:(a,b)=>(b.qTurn-a.qTurn)||((b.qQ3??-1e9)-(a.qQ3??-1e9))},
-  pTurn:     {t:"단가 전환",    f:(a,b)=>(b.pTurn-a.pTurn)||((b.pQ3??-1e9)-(a.pQ3??-1e9))},
-  size:      {t:"금액순",       f:(a,b)=>(b.usd||0)-(a.usd||0)},
+let UNI = null, uniSort = "accel", uniDir = -1, uniQ = "", uniPreset = "";
+// 프리셋은 '필터', 헤더 클릭은 '정렬'. 둘은 독립이다.
+const PRESETS = {
+  "":      {t:"전체"},
+  qTurn:   {t:"물량 턴어라운드", f:r=>r.qTurn},
+  pTurn:   {t:"단가 전환",       f:r=>r.pTurn},
+  clean:   {t:"기저 정상만",     f:r=>r.baseIdx==null||r.baseIdx>=0.75},
 };
+const COLS = [
+  {k:"label", t:"항 · 대표품목", l:1},
+  {k:"chapter", t:"장", l:1},
+  {k:"usd",  t:m=>`${m}M $M`},
+  {k:"yoy",  t:"YoY"},
+  {k:"accel",t:"가속"},
+  {k:"p",    t:"단가 $/kg"},
+  {k:"pYoy", t:"P YoY"},
+  {k:"kg",   t:"물량 톤"},
+  {k:"qYoy", t:"Q YoY"},
+];
 
 function uniRows(){
   const q = uniQ.trim();
   let rows = UNI.items;
   if (q) rows = rows.filter(r =>
     r.hs4.includes(q) || (r.label||"").includes(q) || (r.chapter||"").includes(q));
-  if (uniSort === "qTurn") rows = rows.filter(r=>r.qTurn);
-  if (uniSort === "pTurn") rows = rows.filter(r=>r.pTurn);
-  return rows.slice().sort(SORTS[uniSort].f).slice(0, q ? 60 : 25);
+  const pf = PRESETS[uniPreset]?.f;
+  if (pf) rows = rows.filter(pf);
+  const k = uniSort;
+  const val = r => {
+    const v = r[k];
+    if (v == null) return uniDir < 0 ? -Infinity : Infinity;   // 빈 값은 항상 뒤로
+    return typeof v === "string" ? v : +v;
+  };
+  rows = rows.slice().sort((a,b)=>{
+    const x = val(a), y = val(b);
+    if (typeof x === "string" || typeof y === "string")
+      return String(x).localeCompare(String(y)) * (uniDir < 0 ? -1 : 1);
+    return (x - y) * (uniDir < 0 ? -1 : 1);
+  });
+  return rows.slice(0, q || uniPreset ? 60 : 25);
 }
 
 function drawUniTable(){
   const rows = uniRows();
   const nd = n => n==null ? "–" : pct(n);
+  const arrow = k => uniSort===k ? (uniDir<0?" ▾":" ▴") : "";
+  const th = c => `<th class="${c.l?'l':''} sortable${uniSort===c.k?' sorted':''}"
+    data-col="${c.k}" role="button" tabindex="0"
+    title="클릭하면 이 열로 정렬합니다">${typeof c.t==="function"?c.t(UNI.window):c.t}${arrow(c.k)}</th>`;
   document.getElementById("unitbl").innerHTML = rows.length ? `
-    <table class="wt"><thead><tr>
-      <th class="l">항 · 대표품목</th><th class="l">장</th>
-      <th>${UNI.window}M $M</th><th>YoY</th><th>가속</th>
-      <th>단가 $/kg</th><th>P YoY</th><th>물량 톤</th><th>Q YoY</th>
+    <table class="wt"><thead><tr>${COLS.map(th).join("")}
       <th class="l">추이</th></tr></thead><tbody>` +
     rows.map(r=>`<tr class="itemrow">
       <td class="l"><span class="it">${esc(r.hs4)}</span>
         ${r.watched?'<span class="pu high">워치</span>':''}
+        ${r.baseIdx!=null&&r.baseIdx<0.75?`<span class="pu warn" title="전년 동기 3개월이 그 품목 평년의 ${Math.round(r.baseIdx*100)}% 수준 — 가속이 기저효과일 수 있습니다">기저↓</span>`:''}
+        ${r.baseIdx!=null&&r.baseIdx>1.25?`<span class="pu" title="전년 동기 3개월이 평년보다 높았음 — 가속이 과소평가될 수 있습니다">기저↑</span>`:''}
         <span class="tk">${esc(r.label||"–")}</span></td>
       <td class="l" style="font-size:11px;color:var(--ink-3)">${esc(r.chapter)}</td>
       <td>${fm(r.usd)}</td>
@@ -579,6 +611,15 @@ function drawUniTable(){
       <td class="${r.qYoy>0?'up':'down'}">${nd(r.qYoy)}</td>
       <td class="l">${sparkSVG(r.m,"--s1")}</td></tr>`).join("") + "</tbody></table>"
     : `<p class="pnote">조건에 맞는 항이 없습니다.</p>`;
+  document.querySelectorAll("#unitbl th.sortable").forEach(h=>{
+    const go = () => {
+      const k = h.dataset.col;
+      if (uniSort === k) uniDir = -uniDir; else { uniSort = k; uniDir = -1; }
+      drawUniTable();
+    };
+    h.addEventListener("click", go);
+    h.addEventListener("keydown", e=>{ if(e.key==="Enter"||e.key===" "){e.preventDefault();go();} });
+  });
 }
 
 function renderUniverse(){
@@ -605,15 +646,18 @@ function renderUniverse(){
       <p class="pnote">워치리스트 23개 품목 <b>바깥에서</b> 뭐가 움직이는지 보는 자리입니다.
         관세청 97개 장을 전수 수집해 4단위로 집계했습니다. 라벨은 공식 항 명칭이 아니라
         그 항에서 금액이 가장 큰 10단위 품명(대표품목)입니다.</p>
+      <p class="pnote"><b>표 머리글을 누르면 그 열로 정렬</b>됩니다(한 번 더 누르면 역순).
+        가속이 높은데 <span class="pu warn">기저↓</span> 가 붙은 항은 작년 그 시기가 비어 있어서
+        생긴 착시일 수 있습니다 — YoY 로도 정렬해 함께 보세요.</p>
       <div class="ctl">
-        ${Object.entries(SORTS).map(([k,s])=>
-          `<button class="seg${k===uniSort?" on":""}" data-sort="${k}">${s.t}</button>`).join("")}
+        ${Object.entries(PRESETS).map(([k,s])=>
+          `<button class="seg${k===uniPreset?" on":""}" data-preset="${k}">${s.t}</button>`).join("")}
         <input id="uniq" class="srch" type="search" placeholder="항 코드·품목·장 검색" value="${esc(uniQ)}">
       </div>
       <div class="tscroll" id="unitbl"></div>
     </div>`;
   v.querySelectorAll(".seg").forEach(b=>b.addEventListener("click", ()=>{
-    uniSort = b.dataset.sort; renderUniverse();
+    uniPreset = b.dataset.preset; renderUniverse();
   }));
   const q = document.getElementById("uniq");
   q.addEventListener("input", e=>{ uniQ = e.target.value; drawUniTable(); });
