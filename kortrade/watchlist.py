@@ -137,6 +137,28 @@ def unit_price(usd: float, kg: float) -> float | None:
     return usd / kg
 
 
+def base_index(monthly: list[float], q3p_idx: list[int], yr_idx: list[int]) -> float | None:
+    """전년 동기 3개월이 그 품목 기준으로 비정상적으로 낮았는지 본다.
+
+    가속(=3M YoY − 8M YoY)은 **분자가 아니라 분모** 때문에 커질 수 있다.
+    작년 그 3개월이 유난히 비어 있었으면 올해가 평범해도 가속이 크게 잡힌다.
+    이 값이 1보다 한참 작으면 '기저가 낮아서 생긴 가속'을 의심해야 한다.
+
+        base_index = (전년 동기 3개월 월평균) / (전년 12개월 월평균)
+
+    ※ 가속 자체는 YoY 끼리의 차이라 **달력 계절성은 이미 상쇄돼 있다.**
+      가속을 오염시키는 건 계절성이 아니라 이 기저효과와 선적 타이밍 쏠림이다.
+    """
+    q = [monthly[i] for i in q3p_idx if 0 <= i < len(monthly)]
+    y = [monthly[i] for i in yr_idx if 0 <= i < len(monthly)]
+    if len(q) < 2 or len(y) < 6:
+        return None
+    ya = sum(y) / len(y)
+    if ya <= 0:
+        return None
+    return round((sum(q) / len(q)) / ya, 2)
+
+
 def signals(cur_usd: float, prev_usd: float, cur_kg: float, prev_kg: float,
             q3_usd: float, q3p_usd: float, q3_kg: float, q3p_kg: float) -> dict:
     """사용자가 고른 세 신호를 한 번에 계산한다.
