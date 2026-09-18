@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from kortrade import chains as C
 from kortrade import watchlist as W
 from kortrade.client import CustomsClient, chunk_periods
 from kortrade.collect import Collector, latest_available_yymm
@@ -52,14 +53,30 @@ def main() -> int:
             print("  -", e)
         return 1
 
+    # 밸류체인(해외 현지생산 보정)이 쓰는 코드도 같은 API 로 받는다.
+    cs = C.load()
+    cerrs = cs.validate()
+    if cerrs:
+        print("체인 설정 오류:")
+        for e in cerrs:
+            print("  -", e)
+        return 1
+
     end = args.end or latest_available_yymm()
-    parents = wl.all_parents()
+    parents = sorted(set(wl.all_parents()) | set(cs.all_parents()))
     nw = len(list(chunk_periods(args.start, end, 12)))
 
     # (6단위, 국가) 조합 — 품목마다 필요한 국가가 다르므로 전조합을 돌지 않는다
-    pairs = sorted({(p, c) for i in wl.active() for p in i.parents for c in i.countries})
+    pairs = {(p, c) for i in wl.active() for p in i.parents for c in i.countries}
+    # 현지화는 국가 단위로 일어난다 — 체인이 지정한 시장은 반드시 국가 분해가 필요하다
+    for ch in cs.chains:
+        for code in ch.codes():
+            for mkt in ch.markets:
+                pairs.add((code[:6], mkt))
+    pairs = sorted(pairs)
 
     print(f"수집 구간   : {args.start} ~ {end}  (창 {nw}개)")
+    print(f"체인        : {len(cs.chains)}개 ({', '.join(c.name for c in cs.chains)})")
     print(f"품목        : active {len(wl.active())} / 전체 {len(wl.items)}"
           f"  (draft {[i.key for i in wl.items if not i.active]})")
     print(f"전국 합계   : HS6 {len(parents)}개            → {len(parents) * nw:,}콜")
