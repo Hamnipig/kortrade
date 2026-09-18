@@ -109,6 +109,9 @@ def build(store: Store, wl: W.Watchlist) -> dict | None:
         )
 
         m_usd = tot.groupby("period")["usd"].sum().reindex(months, fill_value=0.0)
+        bi = W.base_index(m_usd.tolist(),
+                          [months.index(x) for x in q3p if x in months],
+                          [months.index(x) for x in prev if x in months])
         m_kg = tot.groupby("period")["kg"].sum().reindex(months, fill_value=0.0)
         m_p = [(u / k) if k >= W.MIN_BASE_KG else None
                for u, k in zip(m_usd.tolist(), m_kg.tolist())]
@@ -127,7 +130,7 @@ def build(store: Store, wl: W.Watchlist) -> dict | None:
             })
         countries.sort(key=lambda r: -r["usd"])
 
-        rows.append({**base, "ready": True, **sig,
+        rows.append({**base, "ready": True, **sig, "baseIdx": bi,
                      "mUsd": [round(x / 1e6, 2) for x in m_usd.tolist()],
                      "mKg": [round(x / 1000, 1) for x in m_kg.tolist()],
                      "mP": [round(x, 2) if x else None for x in m_p],

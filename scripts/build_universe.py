@@ -80,13 +80,16 @@ def build(store: Store) -> dict | None:
         q_kg, qp_kg = w(g, q3, "kg"), w(g, q3p, "kg")
         sig = W.signals(c_usd, p_usd, c_kg, p_kg, q_usd, qp_usd, q_kg, qp_kg)
         m = g.groupby("period")["usd"].sum().reindex(months, fill_value=0.0)
+        ml = m.tolist()
+        bi = W.base_index(ml, [months.index(x) for x in q3p if x in months],
+                          [months.index(x) for x in prev if x in months])
         hs2 = hs4[:2]
         name = (g.sort_values("usd", ascending=False)["top_name"].dropna().head(1).tolist()
                 or [""])[0]
         rows.append({
             "hs4": hs4, "hs2": hs2, "chapter": chapters.get(hs2, hs2),
             "label": name, "watched": hs4 in watched,
-            **sig,
+            **sig, "baseIdx": bi,
             "m": [round(x / 1e6, 1) for x in m.tolist()],
         })
 
