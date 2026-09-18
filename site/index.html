@@ -182,6 +182,15 @@ addEventListener("scroll", hideTip, {passive:true});
 
 let MANIFEST = null, CUR = null, CACHE = {};
 
+// Artifact 배포 시 퍼블리시 스크립트가 채워 넣는다. Pages 에서는 비어 있고 fetch 를 탄다.
+const BOOT = (typeof window !== "undefined" && window.__BOOTSTRAP__) || null;
+function getJSON(path){
+  if (BOOT && BOOT[path]) return Promise.resolve(BOOT[path]);
+  return fetch(path, {cache:"no-cache"}).then(r => {
+    if (!r.ok) throw new Error(r.status); return r.json();
+  });
+}
+
 /* ================= charts ================= */
 function drawMap(mount, S){
   const W=620,H=400,M={t:16,r:24,b:40,l:52}, iw=W-M.l-M.r, ih=H-M.t-M.b;
@@ -439,7 +448,7 @@ function renderSector(S){
         <td class="l">${pi===0?`<span class="catcell">${esc(c.name)}</span> <span class="chip">${c.hs}</span>`:""}</td>
         <td class="l">${esc(p.place)}</td>
         <td>${p.ytd.toLocaleString()}</td>
-        <td class="${p.yoy>0?'up':'down'}">${p.yoy==null?"–":pct(p.yoy)}</td>
+        <td class="${p.yoy>0?'up':'down'}">${p.yoy==null?(p.new?`<span class="chip">신규</span>`:"–"):pct(p.yoy)}</td>
         <td class="${p.q3>0?'up':'down'}">${p.q3==null?"–":pct(p.q3)}</td>
         <td>${p.accel==null?"–":`<span class="chip ${p.accel>0?'up':'down'}">${p.accel>0?"+":""}${p.accel}%p</span>`}</td>
         <td class="l">${sparkSVG(p.v,"--s1")}</td></tr>`).join("")
@@ -479,15 +488,13 @@ function selectTab(key){
   if (!entry.ready){ renderEmpty(entry); return; }
   if (CACHE[key]){ renderSector(CACHE[key]); return; }
   document.getElementById("view").innerHTML = `<div class="empty"><p>불러오는 중…</p></div>`;
-  fetch(`data/${key}.json`, {cache:"no-cache"})
-    .then(r => { if(!r.ok) throw new Error(r.status); return r.json(); })
+  getJSON(`data/${key}.json`)
     .then(d => { CACHE[key]=d; if(CUR===key) renderSector(d); })
     .catch(err => { document.getElementById("view").innerHTML =
       `<div class="empty"><h3>불러오지 못했습니다</h3><p>data/${esc(key)}.json — ${esc(err.message)}</p></div>`; });
 }
 
-fetch("data/manifest.json", {cache:"no-cache"})
-  .then(r => { if(!r.ok) throw new Error(r.status); return r.json(); })
+getJSON("data/manifest.json")
   .then(m => {
     MANIFEST = m;
     const ready = m.sectors.filter(s=>s.ready);
