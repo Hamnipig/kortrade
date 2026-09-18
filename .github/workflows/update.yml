@@ -80,8 +80,21 @@ jobs:
           if [ "${{ inputs.full_refresh }}" = "true" ]; then EXTRA="--revision-window 999"; fi
           python scripts/run_update.py --start "$START" --sectors all $EXTRA
 
+      # 워치리스트는 **다른 API**(품목별 국가별)를 쓴다. 섹터 수집과 분리해 두면
+      # 한쪽이 실패해도 다른 쪽 데이터는 살아남는다.
+      - name: 수집 — 전산업 워치리스트
+        env:
+          DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
+          START: ${{ inputs.start || '202001' }}
+        run: |
+          EXTRA=""
+          if [ "${{ inputs.full_refresh }}" = "true" ]; then EXTRA="--revision-window 999"; fi
+          python scripts/run_watchlist.py --start "$START" $EXTRA
+
       - name: 사이트 데이터 생성
-        run: python scripts/build_site.py
+        run: |
+          python scripts/build_site.py
+          python scripts/build_watchlist.py
 
       # 수집이 중간에 실패해도 그때까지 쓴 수백~수천 콜은 살려야 한다.
       # DB(fetch_log)를 커밋해 두면 재실행이 확정 구간을 건너뛴다.
