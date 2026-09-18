@@ -183,7 +183,18 @@ def test_watchlist_config_and_build():
             assert not (a in it.hsk and b in it.hsk), f"{it.key}: {why} 를 다시 합쳤다"
 
     # 감사에서 발견해 추가한 항목들이 사라지지 않았는지
-    for k in ("cell_other", "skincare_other", "aesthetic_parts", "armor_apc", "cathode_nca"):
+    # 8523 호 안에서 SSD(8523.51)와 음반(8523.49)은 93배 차이나는 별개 산업이다
+    ssd = next(i for i in wl.items if i.key == "ssd_nand")
+    kp = next(i for i in wl.items if i.key == "kpop")
+    assert ssd.hsk[0].startswith("852351"), ssd.hsk
+    assert kp.hsk[0].startswith("852349"), kp.hsk
+    assert not set(ssd.hsk) & set(kp.hsk), "SSD와 음반이 같은 코드를 쓴다"
+    lp = next(i for i in wl.items if i.key == "laser_pcb")
+    assert lp.hsk == ["8456111000"], lp.hsk
+    assert "8456119000" not in lp.hsk, "방향이 반대인 8456119000을 합쳤다"
+
+    for k in ("cell_other", "skincare_other", "aesthetic_parts", "armor_apc", "cathode_nca",
+              "ssd_nand", "laser_pcb"):
         assert any(i.key == k and i.active for i in wl.items), f"감사 산출물 '{k}' 가 빠졌다"
     # 검증 안 된 코드가 조용히 active 로 올라가는 것을 막는다
     for it in wl.active():
@@ -271,6 +282,31 @@ def test_site_contract_scanner():
     for q in ["수요 확장", "점유율 경쟁", "믹스 개선", "위축"]:
         assert q in html, q
     print("  ✓ 스캐너 계약 — 독립 로딩 / HSK 렌더 / 자동 갱신 연결")
+
+
+def test_base_effect_flag_and_sorting():
+    """가속 착시 방어 — 기저지수 산출과 표 정렬 기능."""
+    from kortrade import watchlist as W
+
+    # 전년 동기 3개월이 평년의 1/4 로 꺼졌던 계열 → 기저지수가 낮게 나와야 한다
+    normal = [100.0] * 12
+    dipped = [100.0] * 9 + [25.0] * 3          # 마지막 3개월만 급감
+    q3p, yr = [9, 10, 11], list(range(12))
+    assert W.base_index(normal, q3p, yr) == 1.0
+    bi = W.base_index(dipped, q3p, yr)
+    assert bi is not None and bi < 0.75, bi     # 화면에서 '기저↓' 로 표시되는 구간
+    assert W.base_index([1.0, 2.0], [0], [0, 1]) is None, "표본이 적으면 계산하지 않는다"
+
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    # 머리글 클릭 정렬 (YoY 포함 모든 수치 열)
+    assert 'th class="${c.l?' in html or "sortable" in html
+    assert 'data-col="${c.k}"' in html, "정렬 가능한 머리글이 없다"
+    assert '{k:"yoy"' in html, "YoY 열로 정렬할 수 없다"
+    assert "uniDir = -uniDir" in html, "같은 열 재클릭 시 역순 전환이 없다"
+    # 기저 경고 배지와 필터
+    assert "기저↓" in html and "baseIdx" in html
+    assert 'clean:' in html and "기저 정상만" in html
+    print("  ✓ 기저효과 플래그 + 열 정렬 (가속 착시 방어)")
 
 
 def test_universe_layer():
