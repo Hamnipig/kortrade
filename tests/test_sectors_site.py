@@ -135,6 +135,107 @@ def test_site_html_contract():
     print("  ✓ 사이트/워크플로 계약 (키 하드코딩 없음)")
 
 
+
+
+def test_watchlist_config_and_build():
+    """워치리스트 설정 검증 + P·Q 분해가 실제로 갈리는지."""
+    import tempfile, random
+    from pathlib import Path
+    from kortrade import watchlist as W
+    from kortrade.store import Store
+
+    wl = W.load()
+    errs = wl.validate()
+    assert not errs, errs
+    assert wl.active(), "active 품목이 하나도 없다"
+    # 검증 안 된 코드가 조용히 active 로 올라가는 것을 막는다
+    for it in wl.active():
+        assert it.evidence.strip(), f"{it.key}: 근거 없이 active"
+        assert all(len(c) == 10 for c in it.hsk), it.key
+
+    # ---- P·Q 분해: 금액은 같은데 원인이 다른 두 계열을 구분해야 한다 ----
+    # A: 물량 2배, 단가 절반   → 금액 동일
+    # B: 물량 동일, 단가 2배   → 금액 2배
+    sig_a = W.signals(cur_usd=100e6, prev_usd=100e6, cur_kg=200_000, prev_kg=100_000,
+                      q3_usd=40e6, q3p_usd=40e6, q3_kg=80_000, q3p_kg=40_000)
+    sig_b = W.signals(cur_usd=200e6, prev_usd=100e6, cur_kg=100_000, prev_kg=100_000,
+                      q3_usd=80e6, q3p_usd=40e6, q3_kg=40_000, q3p_kg=40_000)
+    assert sig_a["yoy"] == 0 and sig_a["qYoy"] == 100 and sig_a["pYoy"] == -50, sig_a
+    assert sig_b["yoy"] == 100 and sig_b["qYoy"] == 0 and sig_b["pYoy"] == 100, sig_b
+
+    # 기저가 거의 없는 계열은 % 를 만들지 않는다
+    tiny = W.signals(50e6, 1e6, 200, 20, 20e6, 0.4e6, 80, 8)
+    assert tiny["yoy"] is None, tiny          # 분모 $1M < MIN_BASE_USD
+    assert tiny["p"] is None, tiny            # 중량 200kg < MIN_BASE_KG
+
+    # 반대로 '$/kg 가 크다'는 것 자체는 오류가 아니다 — D램이 실제로 $67,700/kg 다.
+    dram = W.signals(80699e6, 60000e6, 1192e3, 1000e3, 30000e6, 24000e6, 450e3, 400e3)
+    assert dram["p"] and 60_000 < dram["p"] < 75_000, dram["p"]
+
+    # 물량 턴어라운드 판정: 8M 은 마이너스, 최근 3M 은 플러스
+    turn = W.signals(100e6, 110e6, 90_000, 100_000, 40e6, 36e6, 38_000, 34_000)
+    assert turn["qTurn"] is True, turn
+
+    # ---- 실제 빌더가 도는지 (합성 데이터) ----
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "bw", Path(__file__).resolve().parent.parent / "scripts" / "build_watchlist.py")
+    bw = importlib.util.module_from_spec(spec); spec.loader.exec_module(bw)
+
+    with tempfile.TemporaryDirectory() as td:
+        st = Store(Path(td) / "w.sqlite")
+        periods = [f"{y}-{m:02d}" for y in (2024, 2025, 2026) for m in range(1, 13)][:32]
+        recs = []
+        rnd = random.Random(7)
+        for it in wl.active():
+            for i, p in enumerate(periods):
+                for code in it.hsk:
+                    usd = int(5e6 * (1 + 0.02 * i) * (1 + rnd.uniform(-.05, .05)))
+                    kg = int(usd / (40 + i))          # 단가가 서서히 오르는 계열
+                    for cc in ["ALL"] + it.countries[:3]:
+                        f = 1.0 if cc == "ALL" else 0.25
+                        recs.append(dict(period=p, hs_code=code, hs6=code[:6],
+                                         hs_name=it.name, country_code=cc,
+                                         country_name=cc, exp_usd=int(usd * f),
+                                         exp_wgt=int(kg * f), imp_usd=0, imp_wgt=0,
+                                         bal_usd=0))
+        st.upsert_sector(recs)
+        payload = bw.build(st, wl)
+        st.close()
+
+    assert payload, "빌더가 None 을 돌려줬다"
+    ready = [r for r in payload["items"] if r.get("ready")]
+    assert len(ready) == len(wl.active()), (len(ready), len(wl.active()))
+    # draft 품목은 ready=False 로 남아 화면에 '미검증'으로 나와야 한다
+    drafts = [r for r in payload["items"] if not r.get("ready")]
+    assert {r["key"] for r in drafts} == {i.key for i in wl.items if not i.active}
+    # 국가 합이 전국 합계를 넘으면 이중계상이다
+    for r in ready:
+        csum = sum(c["usd"] for c in r["countries"])
+        assert csum <= r["usd"] * 1.001, (r["key"], csum, r["usd"])
+    assert payload["highlights"]["accel"] is not None
+    print(f"  ✓ 워치리스트 — active {len(ready)} / draft {len(drafts)}, P·Q 분해 검증")
+
+
+def test_site_contract_scanner():
+    """스캐너가 섹터와 **독립**으로 뜨는지, HSK 이스케이프가 깨지지 않는지."""
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    # manifest 실패가 스캐너까지 죽이면 안 된다
+    assert "Promise.allSettled" in html, "manifest/워치리스트가 여전히 직렬로 묶여 있다"
+    assert 'MANIFEST = mr.status === "fulfilled"' in html
+    # HSK 는 esc() 로 감싼 뒤 <br> 로 이어야 한다 (반대로 하면 <br> 이 글자로 보인다)
+    assert 'r.hsk.map(esc).join("<br>")' in html, "HSK 줄바꿈이 문자로 출력된다"
+    assert 'esc(r.hsk.join("<br>"))' not in html
+    # 워크플로가 워치리스트를 갱신하는지 — 안 그러면 첫 수집 이후 영원히 멈춘다
+    wf = (ROOT / ".github" / "workflows" / "update.yml").read_text(encoding="utf-8")
+    assert "run_watchlist.py" in wf and "build_watchlist.py" in wf, "자동 갱신에 워치리스트가 빠졌다"
+    # 사분면 축 라벨이 실제로 있어야 한다 (P·Q 해석의 전부)
+    for q in ["수요 확장", "점유율 경쟁", "믹스 개선", "위축"]:
+        assert q in html, q
+    print("  ✓ 스캐너 계약 — 독립 로딩 / HSK 렌더 / 자동 갱신 연결")
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     print(f"\n섹터·사이트 검증 — {len(tests)}개\n")
