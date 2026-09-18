@@ -148,6 +148,21 @@ def test_watchlist_config_and_build():
     errs = wl.validate()
     assert not errs, errs
     assert wl.active(), "active 품목이 하나도 없다"
+    # 실측으로 확정한 코드들이 되돌아가지 않도록 못박는다 (전부 회귀 이력이 있다)
+    fixed = {
+        "cathode":      "2841909020",   # 9010(코발트산리튬 $7M) 아님 — NCM $2,650M
+        "die_bonder":   "8486402010",   # 8486.20 아님 — 호 자체가 다름
+        "frozen_snack": "1905901090",   # 1040(비스킷·쿠키) 아님 — 분석47260-0388
+        "kpop":         "8523491040",   # 8523.49.1060 은 존재하지 않음
+        "cell_ess":     "8507603000",   # EV용(2000)과 반드시 분리
+        "bev":          "8703801000",   # 중고차(2000) 제외
+    }
+    for k, code in fixed.items():
+        it = next((i for i in wl.items if i.key == k), None)
+        assert it, f"품목 '{k}' 가 사라졌다"
+        assert code in it.hsk, f"{k}: {code} 가 빠졌다 (현재 {it.hsk})"
+    assert "2841909010" not in wl.items[0].hsk, "코발트산리튬으로 되돌아갔다"
+    assert all("2841909010" not in i.hsk for i in wl.items), "코발트산리튬($7M)으로 되돌아갔다"
     # 검증 안 된 코드가 조용히 active 로 올라가는 것을 막는다
     for it in wl.active():
         assert it.evidence.strip(), f"{it.key}: 근거 없이 active"
@@ -234,6 +249,57 @@ def test_site_contract_scanner():
     for q in ["수요 확장", "점유율 경쟁", "믹스 개선", "위축"]:
         assert q in html, q
     print("  ✓ 스캐너 계약 — 독립 로딩 / HSK 렌더 / 자동 갱신 연결")
+
+
+def test_universe_layer():
+    """유니버스 레이어 — 4단위 집계, 워치리스트와 지표 정의 일치, 화면 연결."""
+    import tempfile, random, importlib.util, yaml as _y
+    from pathlib import Path
+    from kortrade.store import Store
+    from kortrade import watchlist as W
+
+    chs = _y.safe_load((ROOT / "config" / "hs_chapters.yaml").read_text(encoding="utf-8"))["chapters"]
+    chs = {str(k).zfill(2): v for k, v in chs.items()}
+    assert len(chs) == 97, f"장이 97개가 아니다 ({len(chs)})"
+    assert chs["85"] and chs["33"] and chs["87"], "핵심 장 이름 누락"
+
+    spec = importlib.util.spec_from_file_location("bu", ROOT / "scripts" / "build_universe.py")
+    bu = importlib.util.module_from_spec(spec); spec.loader.exec_module(bu)
+
+    with tempfile.TemporaryDirectory() as td:
+        st = Store(Path(td) / "u.sqlite")
+        periods = [f"{y}-{m:02d}" for y in (2024, 2025, 2026) for m in range(1, 13)][:32]
+        rnd = random.Random(2)
+        recs = []
+        for c in ["28", "33", "85", "87"]:
+            for n in range(1, 4):
+                h = f"{c}{n:02d}"
+                for i, p_ in enumerate(periods):
+                    kg = 4e5 * (1.01 ** i) * (1 + rnd.uniform(-.04, .04))
+                    recs.append(dict(period=p_, hs4=h, hs2=c, top_name=f"품목{h}",
+                                     exp_usd=int(kg * 30), exp_wgt=int(kg), imp_usd=0))
+        st.upsert_universe(recs)
+        pl = bu.build(st)
+        st.close()
+
+    assert pl, "빌더가 None"
+    assert all(len(r["hs4"]) == 4 for r in pl["items"]), "4단위가 아닌 항이 섞였다"
+    assert all(r["hs2"] == r["hs4"][:2] for r in pl["items"])
+    # 장 롤업 합계가 항 합계를 넘으면 이중계상
+    ci = sum(r["usd"] for r in pl["items"])
+    cc = sum(r["usd"] for r in pl["chapters"])
+    assert abs(ci - cc) / max(cc, 1) < 0.02, (ci, cc)
+    # 지표 정의를 워치리스트와 공유해야 두 화면 숫자가 어긋나지 않는다
+    src = (ROOT / "scripts" / "build_universe.py").read_text(encoding="utf-8")
+    assert "W.signals(" in src, "유니버스가 별도 지표 계산을 쓰고 있다 — 정의가 갈린다"
+
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    assert "data/universe.json" in html and "renderUniverse" in html
+    assert 'scanPane = "uni"' in html, "기본 화면이 전체 유니버스가 아니다"
+    wf = (ROOT / ".github" / "workflows" / "update.yml").read_text(encoding="utf-8")
+    assert "run_universe.py" in wf and "build_universe.py" in wf, "자동 갱신에 유니버스가 빠졌다"
+    assert "DB 크기 점검" in wf, "100MB 한도 경고가 없다"
+    print(f"  ✓ 유니버스 — 장 97개, 항 {len(pl['items'])}개, 롤업 정합, 지표 공유")
 
 
 def main() -> int:
