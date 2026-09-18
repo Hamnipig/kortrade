@@ -179,6 +179,23 @@ tbody tr.newcat td{border-top:1px solid var(--rule)}
   white-space:normal;line-height:1.5;max-width:none}
 .wt tr.itemrow:hover td,.wt tr.itemrow:hover + tr.idearow td{background:var(--surface-2)}
 .wt tbody tr:hover{background:none}
+
+.ctl{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:2px 0 12px}
+.seg{background:var(--surface-2);border:1px solid var(--rule);color:var(--ink-2);
+  font-family:var(--sans);font-size:11.5px;padding:4px 10px;border-radius:2px;cursor:pointer}
+.seg:hover{color:var(--ink)}
+.seg.on{background:var(--s1);border-color:var(--s1);color:#fff;font-weight:600}
+.seg:focus-visible{outline:2px solid var(--s1);outline-offset:2px}
+.srch{margin-left:auto;background:var(--surface);border:1px solid var(--rule);color:var(--ink);
+  font-family:var(--sans);font-size:12px;padding:4px 9px;border-radius:2px;min-width:180px}
+.srch:focus{outline:2px solid var(--s1);outline-offset:-1px}
+.subtabs{display:flex;gap:6px;margin:0 0 18px}
+.subtab{background:none;border:0;border-bottom:2px solid transparent;color:var(--ink-3);
+  font-family:var(--sans);font-size:13px;font-weight:500;padding:6px 2px 7px;cursor:pointer;
+  display:inline-flex;gap:6px;align-items:baseline;margin-right:14px}
+.subtab .tnum{font-family:var(--mono);font-size:10.5px}
+.subtab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--s1);font-weight:600}
+.subtab:focus-visible{outline:2px solid var(--s1);outline-offset:2px}
 </style>
 </head>
 <body>
@@ -519,6 +536,90 @@ function renderEmpty(entry){
     </div>`;
 }
 
+/* ================= 유니버스 랭킹 ================= */
+let UNI = null, uniSort = "accelUp", uniQ = "";
+const SORTS = {
+  accelUp:   {t:"가속 ↑",      f:(a,b)=>(b.accel??-1e9)-(a.accel??-1e9)},
+  accelDown: {t:"가속 ↓",      f:(a,b)=>(a.accel??1e9)-(b.accel??1e9)},
+  qTurn:     {t:"물량 턴어라운드", f:(a,b)=>(b.qTurn-a.qTurn)||((b.qQ3??-1e9)-(a.qQ3??-1e9))},
+  pTurn:     {t:"단가 전환",    f:(a,b)=>(b.pTurn-a.pTurn)||((b.pQ3??-1e9)-(a.pQ3??-1e9))},
+  size:      {t:"금액순",       f:(a,b)=>(b.usd||0)-(a.usd||0)},
+};
+
+function uniRows(){
+  const q = uniQ.trim();
+  let rows = UNI.items;
+  if (q) rows = rows.filter(r =>
+    r.hs4.includes(q) || (r.label||"").includes(q) || (r.chapter||"").includes(q));
+  if (uniSort === "qTurn") rows = rows.filter(r=>r.qTurn);
+  if (uniSort === "pTurn") rows = rows.filter(r=>r.pTurn);
+  return rows.slice().sort(SORTS[uniSort].f).slice(0, q ? 60 : 25);
+}
+
+function drawUniTable(){
+  const rows = uniRows();
+  const nd = n => n==null ? "–" : pct(n);
+  document.getElementById("unitbl").innerHTML = rows.length ? `
+    <table class="wt"><thead><tr>
+      <th class="l">항 · 대표품목</th><th class="l">장</th>
+      <th>${UNI.window}M $M</th><th>YoY</th><th>가속</th>
+      <th>단가 $/kg</th><th>P YoY</th><th>물량 톤</th><th>Q YoY</th>
+      <th class="l">추이</th></tr></thead><tbody>` +
+    rows.map(r=>`<tr class="itemrow">
+      <td class="l"><span class="it">${esc(r.hs4)}</span>
+        ${r.watched?'<span class="pu high">워치</span>':''}
+        <span class="tk">${esc(r.label||"–")}</span></td>
+      <td class="l" style="font-size:11px;color:var(--ink-3)">${esc(r.chapter)}</td>
+      <td>${fm(r.usd)}</td>
+      <td class="${r.yoy>0?'up':'down'}">${nd(r.yoy)}</td>
+      <td>${r.accel==null?"–":`<span class="chip ${r.accel>0?'up':'down'}">${r.accel>0?"+":""}${r.accel}%p</span>`}</td>
+      <td>${r.p==null?"–":r.p.toLocaleString(undefined,{maximumFractionDigits:r.p<100?2:0})}</td>
+      <td class="${r.pYoy>0?'up':'down'}">${nd(r.pYoy)}</td>
+      <td>${fm(r.kg)}</td>
+      <td class="${r.qYoy>0?'up':'down'}">${nd(r.qYoy)}</td>
+      <td class="l">${sparkSVG(r.m,"--s1")}</td></tr>`).join("") + "</tbody></table>"
+    : `<p class="pnote">조건에 맞는 항이 없습니다.</p>`;
+}
+
+function renderUniverse(){
+  const v = document.getElementById("unipane");
+  if (!UNI){
+    v.innerHTML = `<div class="empty"><h3>전체 유니버스 — 아직 수집 전입니다</h3>
+      <p>97개 장(HS 2단위)을 전수 수집해 4단위로 집계하는 레이어입니다. 워치리스트와 별개 단계입니다.</p>
+      <code>python scripts/run_universe.py &amp;&amp; python scripts/build_universe.py</code></div>`;
+    return;
+  }
+  const t = UNI.totals;
+  v.innerHTML = `
+    <div class="stats">
+      <div class="stat"><div class="k">최근 ${UNI.window}개월 수출</div>
+        <div class="v">$${fm(t.usd)}M</div><div class="d">추적 ${t.nHs4}개 항 / ${t.nChapters}개 장</div></div>
+      ${UNI.chapters.slice(0,3).map(c=>`<div class="stat">
+        <div class="k">${esc(c.chapter)}</div><div class="v">$${fm(c.usd)}M</div>
+        <div class="d"><span class="${c.yoy>0?'up':'down'}">${c.yoy==null?"–":pct(c.yoy)}</span>
+          · 가속 ${c.accel==null?"–":(c.accel>0?"+":"")+c.accel+"%p"}</div></div>`).join("")}
+    </div>
+    <div class="panel p12">
+      <div class="phead"><h3 class="ptitle">전체 수출 랭킹</h3>
+        <span class="unit">HS 4단위 · 비교창 $${UNI.minUsd}M 이상</span></div>
+      <p class="pnote">워치리스트 23개 품목 <b>바깥에서</b> 뭐가 움직이는지 보는 자리입니다.
+        관세청 97개 장을 전수 수집해 4단위로 집계했습니다. 라벨은 공식 항 명칭이 아니라
+        그 항에서 금액이 가장 큰 10단위 품명(대표품목)입니다.</p>
+      <div class="ctl">
+        ${Object.entries(SORTS).map(([k,s])=>
+          `<button class="seg${k===uniSort?" on":""}" data-sort="${k}">${s.t}</button>`).join("")}
+        <input id="uniq" class="srch" type="search" placeholder="항 코드·품목·장 검색" value="${esc(uniQ)}">
+      </div>
+      <div class="tscroll" id="unitbl"></div>
+    </div>`;
+  v.querySelectorAll(".seg").forEach(b=>b.addEventListener("click", ()=>{
+    uniSort = b.dataset.sort; renderUniverse();
+  }));
+  const q = document.getElementById("uniq");
+  q.addEventListener("input", e=>{ uniQ = e.target.value; drawUniTable(); });
+  drawUniTable();
+}
+
 /* ================= 전산업 스캐너 ================= */
 const GC = {consumer:"--s1", ithw:"--s2", heavy:"--s3", content:"--s4"};
 const CLAMP = {x:[-70,140], y:[-60,90]};   // 극단값은 가장자리로 밀고 표시만 바꾼다
@@ -622,8 +723,34 @@ function sigCard(title, sub, keys, WL, fmt){
       : "<li>해당 품목 없음</li>"}</ol></div>`;
 }
 
+let scanPane = "uni";   // 기본은 전체 유니버스 — "먼저 전산업을 보고 특정 산업으로"
+
 function renderScan(WL){
   const v = document.getElementById("view");
+  v.innerHTML = `
+    <div class="subtabs" role="tablist">
+      <button class="subtab" role="tab" data-pane="uni" aria-selected="${scanPane==="uni"}">
+        전체 유니버스<span class="tnum">${UNI?UNI.totals.nHs4+"개 항":"미수집"}</span></button>
+      <button class="subtab" role="tab" data-pane="wl" aria-selected="${scanPane==="wl"}">
+        워치리스트<span class="tnum">${WL?WL.items.filter(r=>r.ready).length+"품목":"미수집"}</span></button>
+    </div>
+    <div id="unipane" ${scanPane==="uni"?"":"hidden"}></div>
+    <div id="wlpane" ${scanPane==="wl"?"":"hidden"}></div>`;
+  v.querySelectorAll(".subtab").forEach(b=>b.addEventListener("click",()=>{
+    scanPane = b.dataset.pane; renderScan(WL);
+  }));
+  if (scanPane === "uni"){ renderUniverse(); return; }
+  if (!WL){
+    document.getElementById("wlpane").innerHTML =
+      `<div class="empty"><h3>워치리스트 — 아직 수집 전입니다</h3>
+       <code>python scripts/run_watchlist.py &amp;&amp; python scripts/build_watchlist.py</code></div>`;
+    return;
+  }
+  renderWatchlist(WL);
+}
+
+function renderWatchlist(WL){
+  const v = document.getElementById("wlpane");
   const H = WL.highlights || {};
   v.innerHTML = `
     <p class="thesis">관세청 품목별·국가별 통관 데이터를 HSK 10단위로 받아, 금액을
@@ -712,7 +839,7 @@ function selectTab(key){
   [...document.querySelectorAll(".tab")].forEach(b =>
     b.setAttribute("aria-selected", String(b.dataset.key === key)));
   if (key === SCAN_KEY){
-    if (WATCH) renderScan(WATCH);
+    if (WATCH || UNI) renderScan(WATCH);
     else document.getElementById("view").innerHTML =
       `<div class="empty"><h3>전산업 스캐너 — 아직 수집 전입니다</h3>
        <p>워치리스트는 <b>품목별 국가별 API</b>를 따로 받습니다. 섹터 수집과 별개의 단계입니다.</p>
@@ -732,13 +859,16 @@ function selectTab(key){
 
 // 섹터(manifest)와 워치리스트는 **서로 독립**이다. 한쪽이 없어도 다른 쪽은 떠야 한다.
 // (초기에 manifest 로딩 실패가 스캐너까지 같이 죽이는 구조였다)
-Promise.allSettled([getJSON("data/manifest.json"), getJSON("data/watchlist.json")])
-  .then(([mr, wr]) => {
+Promise.allSettled([getJSON("data/manifest.json"), getJSON("data/watchlist.json"),
+                    getJSON("data/universe.json")])
+  .then(([mr, wr, ur]) => {
     MANIFEST = mr.status === "fulfilled" ? mr.value : {sectors: []};
     WATCH    = wr.status === "fulfilled" ? wr.value : null;
+    UNI      = ur.status === "fulfilled" ? ur.value : null;
+    if (!WATCH && UNI) scanPane = "uni";
     const m = MANIFEST, ready = (m.sectors||[]).filter(s=>s.ready);
 
-    if (!ready.length && !WATCH){
+    if (!ready.length && !WATCH && !UNI){
       document.getElementById("view").innerHTML = `
         <div class="empty">
           <h3>아직 데이터가 없습니다</h3>
@@ -750,13 +880,14 @@ Promise.allSettled([getJSON("data/manifest.json"), getJSON("data/watchlist.json"
       return;
     }
 
-    const asOf = WATCH?.asOf || ready[0]?.asOf;
+    const asOf = UNI?.asOf || WATCH?.asOf || ready[0]?.asOf;
     document.getElementById("meta").innerHTML =
       `갱신 <b>${esc(m.generatedAt || WATCH?.builtAt || "–")}</b><br>` +
       (asOf ? `기준월 <b>${esc(asOf)}</b><br>` : "") +
       `단위 <b>백만 USD (FOB)</b>`;
 
-    const nScan = WATCH ? WATCH.items.filter(r=>r.ready).length + "품목" : "미수집";
+    const nScan = UNI ? UNI.totals.nHs4 + "개 항"
+      : (WATCH ? WATCH.items.filter(r=>r.ready).length + "품목" : "미수집");
     document.getElementById("tabs").innerHTML =
       `<button class="tab" role="tab" data-key="${SCAN_KEY}" aria-selected="false">
         전산업 스캐너<span class="tnum">${esc(nScan)}</span></button>` +
@@ -780,11 +911,11 @@ Promise.allSettled([getJSON("data/manifest.json"), getJSON("data/watchlist.json"
 
     const want = location.hash.slice(1);
     const known = want === SCAN_KEY || (m.sectors||[]).some(s=>s.key===want);
-    selectTab(known ? want : (WATCH ? SCAN_KEY : ready[0].key));
+    selectTab(known ? want : ((WATCH||UNI) ? SCAN_KEY : ready[0].key));
   });
 
 const reflow = () => {
-  if (CUR === SCAN_KEY && WATCH) renderScan(WATCH);
+  if (CUR === SCAN_KEY && (WATCH||UNI)) renderScan(WATCH);
   else if (CUR && CACHE[CUR]) renderSector(CACHE[CUR]);
 };
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", reflow);
