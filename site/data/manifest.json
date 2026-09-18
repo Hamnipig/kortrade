@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-09-18 10:48 KST",
+ "generatedAt": "2026-09-18 11:13 KST",
  "sectors": [
   {
    "key": "cosmetics",
@@ -34,7 +34,7 @@
  ],
  "coverage": {
   "sector_trade": {
-   "rows": 34710,
+   "rows": 43996,
    "from": "2020-01",
    "to": "2026-08"
   },
