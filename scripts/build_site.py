@@ -24,6 +24,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from kortrade import regions
+from kortrade.codes import canon_sido
 from kortrade.sectors import Sector, load_sectors, validate_all
 from kortrade.store import Store
 
@@ -35,6 +36,9 @@ WINDOW = 8          # YTD 비교창(개월)
 RECENT = 3          # 최근 구간(개월)
 TOP_PLACES = 8      # 카테고리별 상위 시군구 수
 HIST_MONTHS = 32    # 차트에 싣는 월수
+# 증가율의 분모(전년 동기) 최소액. 이보다 작으면 % 를 계산하지 않는다.
+# 기저가 거의 0인 계열에서 +1267% 같은 값이 나와 로테이션 판단을 오염시킨다.
+MIN_BASE_USD = 2_000_000
 
 
 def _shift(p: str, k: int) -> str:
@@ -62,7 +66,11 @@ def load_region(store: Store, codes: list[str]) -> pd.DataFrame:
     # 행정구역 개편으로 이름이 바뀐 시군구를 한 실체로 접는다 (인천 중구 -> 제물포구 등)
     df["sigungu_name"] = [regions.canonical_sigungu(s or "", g)
                           for s, g in zip(df["sido_name"].fillna(""), df["sigungu_name"])]
-    df["place"] = df["sido_name"].fillna("").str[:2] + " " + df["sigungu_name"]
+    # ★ str[:2] 로 자르면 안 된다. '경상북도'·'경상남도'가 둘 다 '경상'이 되고
+    #   '충청남도'·'충청북도'도 둘 다 '충청'이 되어 서로 다른 지역이 한 줄로 합쳐 보인다.
+    #   (실측: '경상 성주군'으로 표시됐는데 성주군은 경상북도다.)
+    df["place"] = pd.Series([canon_sido(s) for s in df["sido_name"].fillna("")],
+                            index=df.index) + " " + df["sigungu_name"]
     return df
 
 
@@ -101,11 +109,18 @@ def build_sector(store: Store, sec: Sector) -> dict | None:
             if pc < 1_000_000:          # 비교창 $1M 미만은 노이즈
                 continue
             gm = g.groupby("period")["exp_usd"].sum().reindex(months, fill_value=0.0)
-            py, pq = _pct(pc, pp_), _pct(win(g, q_cur), win(g, q_prev))
+            # ★ 분모(전년 동기)가 거의 0이면 증가율은 숫자만 크고 뜻이 없다.
+            #   실측: 인천 남동구 향수 YoY +1267%, 가속 -837.4%p — 기저가 $0.6M 이었다.
+            #   이런 값은 '–'로 비우고 신규 진입 표시만 남긴다. 억지로 % 를 쓰면
+            #   로테이션 판단이 기저효과에 끌려간다.
+            py = _pct(pc, pp_) if pp_ >= MIN_BASE_USD else None
+            qcv, qpv = win(g, q_cur), win(g, q_prev)
+            pq = _pct(qcv, qpv) if qpv >= MIN_BASE_USD else None
             places.append({
                 "place": place, "ytd": round(pc / 1e6, 1),
                 "yoy": py, "q3": pq,
                 "accel": round(pq - py, 1) if (py is not None and pq is not None) else None,
+                "new": pp_ < MIN_BASE_USD,      # 전년 기저가 없던 신규 진입
                 "v": [round(x / 1e6, 2) for x in gm.tolist()],
             })
         places.sort(key=lambda r: -r["ytd"])
