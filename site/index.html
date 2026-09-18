@@ -202,6 +202,16 @@ tbody tr.newcat td{border-top:1px solid var(--rule)}
 .wt th.sorted{color:var(--ink);font-weight:600}
 .wt th.sortable:focus-visible{outline:2px solid var(--s1);outline-offset:-2px}
 .pu.warn{border-color:var(--s4);color:var(--s4)}
+
+.chain{margin-bottom:34px}
+.vd{border-left:3px solid var(--mid);background:var(--surface-2);padding:10px 13px;
+  border-radius:0 3px 3px 0;font-size:12.5px;color:var(--ink-2);margin:0 0 16px;line-height:1.6}
+.vd b{color:var(--ink);font-size:13px}
+.vd.vd-loc{border-left-color:var(--s4)}
+.vd.vd-mix{border-left-color:var(--s2)}
+.vd.vd-bad{border-left-color:var(--crit)}
+.vd.vd-good{border-left-color:var(--good)}
+.pu.loc{border-color:var(--s4);color:var(--s4)}
 </style>
 </head>
 <body>
@@ -664,6 +674,135 @@ function renderUniverse(){
   drawUniTable();
 }
 
+/* ================= 밸류체인 (해외 현지생산 보정) ================= */
+let CHAINS = null, chainMkt = {};
+const VCLS = {localizing:"vd-loc", mixed:"vd-mix", contracting:"vd-bad",
+              expanding:"vd-good", expanding_local:"vd-good", unknown:"vd-na"};
+
+function drawLoc(mount, v, months){
+  const W=700,H=250,M={t:16,r:20,b:34,l:48}, iw=W-M.l-M.r, ih=H-M.t-M.b;
+  const pts = v.mLoc.map((x,i)=>({i,x})).filter(p=>p.x!=null);
+  if (pts.length < 4){ mount.innerHTML='<p class="pnote">현지화지수를 그릴 데이터가 부족합니다.</p>'; return; }
+  const ys = pts.map(p=>p.x);
+  const y1 = Math.max(2, Math.ceil(Math.max(...ys)*1.15*10)/10);
+  const X = i => M.l + (i/(months.length-1))*iw;
+  const Y = x => M.t + ih - (Math.min(x,y1)/y1)*ih;
+  const s = el("svg",{viewBox:`0 0 ${W} ${H}`, role:"img",
+    "aria-label":"현지화지수 추이 — 상류 대비 완제품 비율"});
+  // 1.0 = 상류와 완제품이 같은 규모. 이 선을 넘으면 사실상 부품 수출국이 된다
+  [0.5,1,1.5,2].filter(g=>g<=y1).forEach(g=>{
+    s.appendChild(el("line",{x1:M.l,x2:M.l+iw,y1:Y(g),y2:Y(g),class:g===1?"ax":"gl"}));
+    s.appendChild(Object.assign(el("text",{x:M.l-8,y:Y(g)+3.5,class:"tk","text-anchor":"end"}),
+      {textContent:g.toFixed(1)}));
+  });
+  months.forEach((m,i)=>{ if(i%6===0) s.appendChild(Object.assign(
+    el("text",{x:X(i),y:M.t+ih+16,class:"tk","text-anchor":"middle"}),{textContent:m.slice(2)}));});
+  const d = pts.map((p,k)=>`${k?"L":"M"}${X(p.i).toFixed(1)},${Y(p.x).toFixed(1)}`).join("");
+  s.appendChild(el("path",{d, fill:"none", stroke:cv("--s2"), "stroke-width":2,
+    "stroke-linejoin":"round"}));
+  const last = pts[pts.length-1];
+  s.appendChild(el("circle",{cx:X(last.i),cy:Y(last.x),r:4,fill:cv("--s2"),
+    stroke:cv("--surface"),"stroke-width":2}));
+  s.appendChild(Object.assign(el("text",{x:X(last.i)-6,y:Y(last.x)-9,class:"dlab","text-anchor":"end"}),
+    {textContent:last.x.toFixed(2)}));
+  mount.innerHTML=""; mount.appendChild(s);
+}
+
+function renderChains(){
+  const v = document.getElementById("chainpane");
+  if (!CHAINS){
+    v.innerHTML = `<div class="empty"><h3>밸류체인 — 아직 수집 전입니다</h3>
+      <p>완제품·부품·소재를 묶어 해외 현지생산을 보정하는 레이어입니다.</p>
+      <code>python scripts/run_watchlist.py &amp;&amp; python scripts/build_chains.py</code></div>`;
+    return;
+  }
+  v.innerHTML = `
+    <p class="thesis">수출 데이터의 가장 큰 구멍은 <b>해외 현지생산</b>입니다. 기업이 현지 공장에서
+      완제품을 만들기 시작하면 국내 수출은 줄지만 실적은 오히려 좋아질 수 있습니다.
+      완제품이 현지로 가도 <b>부품·소재는 여전히 한국에서 나가므로</b>, 단계를 묶으면
+      "수요가 줄었나"와 "생산지가 옮겨갔나"를 갈라낼 수 있습니다.</p>
+    ${CHAINS.chains.map(ch=>`<div class="chain" id="ch-${esc(ch.key)}"></div>`).join("")}
+    <div class="warn"><b>이 지표로도 못 보는 것</b> — 현지법인 매출·가동률은 통관 데이터에
+      원리적으로 없습니다. 체인 지표는 <b>"수출 감소 = 실적 악화"라는 오독을 막는 장치</b>이지
+      현지 실적을 대체하지 못합니다. 최종 확인은 DART 연결재무제표 부문정보(지역별 매출)와
+      대조하세요. 또한 현지 조달이 늘면(현지산 소재 채택 등) 상류 프록시도 함께 죽습니다.</div>`;
+
+  CHAINS.chains.forEach(ch=>{
+    const mk = chainMkt[ch.key] || ch.views[0].market;
+    const v0 = ch.views.find(x=>x.market===mk) || ch.views[0];
+    const vd = v0.verdict;
+    const nm = c => c==="ALL" ? "전체" : c;
+    const el_ = document.getElementById("ch-"+ch.key);
+    el_.innerHTML = `
+      <h3 class="gname">${esc(ch.name)}</h3>
+      <p class="gthesis">${esc(ch.thesis)}</p>
+      <div class="ctl">
+        ${ch.views.map(x=>`<button class="seg${x.market===mk?" on":""}"
+          data-ch="${esc(ch.key)}" data-mkt="${esc(x.market)}">${esc(nm(x.market))}</button>`).join("")}
+      </div>
+      <div class="vd ${VCLS[vd.code]||"vd-na"}">
+        <b>${esc(vd.label)}</b> · ${esc(vd.note)}
+      </div>
+      <div class="stats">
+        <div class="stat"><div class="k">완제품</div><div class="v">$${fm(v0.final)}M</div>
+          <div class="d"><span class="${v0.finalYoy>0?'up':'down'}">${v0.finalYoy==null?"–":pct(v0.finalYoy)}</span></div></div>
+        <div class="stat"><div class="k">부품 + 소재</div><div class="v">$${fm(v0.upstream)}M</div>
+          <div class="d"><span class="${v0.upstreamYoy>0?'up':'down'}">${v0.upstreamYoy==null?"–":pct(v0.upstreamYoy)}</span></div></div>
+        <div class="stat"><div class="k">체인 전체</div><div class="v">$${fm(v0.total)}M</div>
+          <div class="d"><span class="${v0.totalYoy>0?'up':'down'}">${v0.totalYoy==null?"–":pct(v0.totalYoy)}</span> · 전년 $${fm(v0.totalPrev)}M</div></div>
+        <div class="stat"><div class="k">현지화지수</div><div class="v">${v0.loc==null?"–":v0.loc.toFixed(2)}</div>
+          <div class="d">전년 ${v0.locPrev==null?"–":v0.locPrev.toFixed(2)} · 상류÷완제품</div></div>
+      </div>
+      <div class="panels">
+        <div class="panel p7">
+          <div class="phead"><h3 class="ptitle">현지화지수 추이</h3>
+            <span class="unit">(부품+소재) ÷ 완제품</span></div>
+          <p class="pnote">1.0 을 넘으면 그 시장으로는 완제품보다 부품을 더 많이 내보내고 있다는 뜻입니다.</p>
+          <div id="loc-${esc(ch.key)}"></div>
+        </div>
+        <div class="panel p5">
+          <div class="phead"><h3 class="ptitle">단계별 구성</h3><span class="unit">최근 ${CHAINS.window}개월</span></div>
+          <div class="tscroll"><table class="wt"><thead><tr>
+            <th class="l">단계</th><th>$M</th><th>YoY</th></tr></thead><tbody>
+            ${[["final","완제품"],["component","부품"],["material","소재"],["equipment","장비(선행)"]]
+              .filter(([k])=>v0.stages[k]>0).map(([k,label])=>`<tr class="itemrow">
+              <td class="l">${label}</td><td>${fm(v0.stages[k])}</td>
+              <td class="${v0.stagesYoy[k]>0?'up':'down'}">${v0.stagesYoy[k]==null?"–":pct(v0.stagesYoy[k])}</td></tr>`).join("")}
+          </tbody></table></div>
+          <p class="pnote">장비는 설비투자 흐름이라 체인 합계에서 제외합니다 — 현지 증설의 <b>선행</b> 지표로만 봅니다.</p>
+        </div>
+      </div>
+      ${(v0.finals||[]).some(f=>f.verdict.code==="localizing"||f.verdict.code==="mixed") ? `
+      <div class="vd vd-loc" style="margin-top:12px"><b>품목별 주의</b> ·
+        ${v0.finals.filter(f=>f.verdict.code==="localizing"||f.verdict.code==="mixed")
+          .map(f=>`<b>${esc(f.label)}</b> ${pct(f.yoy)} (${esc(f.verdict.label)})`).join(" / ")}
+        — 체인 합계는 ${v0.totalYoy==null?"–":pct(v0.totalYoy)} 입니다.
+        이 품목들의 감소를 수요 감소로 읽지 마세요.</div>` : ""}
+      <p class="pnote" style="margin-top:10px">구성 품목:
+        ${ch.items.map(i=>`<span class="chip">${esc(i.label)}</span>`).join(" ")}</p>`;
+    drawLoc(document.getElementById("loc-"+ch.key), v0, CHAINS.months);
+    el_.querySelectorAll(".seg").forEach(b=>b.addEventListener("click",()=>{
+      chainMkt[b.dataset.ch] = b.dataset.mkt; renderChains();
+    }));
+  });
+}
+
+// 워치리스트 행에 붙일 '현지화' 경고 — 그 품목이 어느 체인의 완제품인지 역참조한다
+function localizationWarn(hsk){
+  if (!CHAINS) return null;
+  for (const ch of CHAINS.chains){
+    for (const v of ch.views){
+      // 체인 합계가 아니라 **그 품목**의 판정을 본다.
+      // 실측: 체인 전체 +13% 인데 ESS셀만 −13% — 합계로는 안 잡힌다.
+      const fi = (v.finals||[]).find(f => hsk.includes(f.code) &&
+        (f.verdict.code==="localizing" || f.verdict.code==="mixed"));
+      if (fi) return {chain:ch.name, market:v.market==="ALL"?"전체":v.market,
+                      item:fi, note:fi.verdict.note, label:fi.verdict.label};
+    }
+  }
+  return null;
+}
+
 /* ================= 전산업 스캐너 ================= */
 const GC = {consumer:"--s1", ithw:"--s2", heavy:"--s3", content:"--s4"};
 const CLAMP = {x:[-70,140], y:[-60,90]};   // 극단값은 가장자리로 밀고 표시만 바꾼다
@@ -777,13 +916,17 @@ function renderScan(WL){
         전체 유니버스<span class="tnum">${UNI?UNI.totals.nHs4+"개 항":"미수집"}</span></button>
       <button class="subtab" role="tab" data-pane="wl" aria-selected="${scanPane==="wl"}">
         워치리스트<span class="tnum">${WL?WL.items.filter(r=>r.ready).length+"품목":"미수집"}</span></button>
+      <button class="subtab" role="tab" data-pane="chain" aria-selected="${scanPane==="chain"}">
+        밸류체인<span class="tnum">${CHAINS?CHAINS.chains.length+"개":"미수집"}</span></button>
     </div>
     <div id="unipane" ${scanPane==="uni"?"":"hidden"}></div>
-    <div id="wlpane" ${scanPane==="wl"?"":"hidden"}></div>`;
+    <div id="wlpane" ${scanPane==="wl"?"":"hidden"}></div>
+    <div id="chainpane" ${scanPane==="chain"?"":"hidden"}></div>`;
   v.querySelectorAll(".subtab").forEach(b=>b.addEventListener("click",()=>{
     scanPane = b.dataset.pane; renderScan(WL);
   }));
   if (scanPane === "uni"){ renderUniverse(); return; }
+  if (scanPane === "chain"){ renderChains(); return; }
   if (!WL){
     document.getElementById("wlpane").innerHTML =
       `<div class="empty"><h3>워치리스트 — 아직 수집 전입니다</h3>
@@ -840,6 +983,12 @@ function renderWatchlist(WL){
     const pu = r => r.purity==="high" ? '<span class="pu high">순도 高</span>'
               : r.purity==="mid" ? '<span class="pu">순도 中</span>'
               : '<span class="pu">순도 低</span>';
+    // 이 품목이 어느 체인의 완제품이고 그 체인이 현지화 중이면 경고를 붙인다.
+    // 완제품 수출 감소만 보고 수요 감소로 판단하지 않게 막는 장치다.
+    const lw = r => {
+      const w = localizationWarn(r.hsk || []);
+      return w ? `<span class="pu loc" title="${esc(w.chain)} 체인 · ${esc(w.market)} 시장 — ${esc(w.note)}">${esc(w.label)}</span>` : "";
+    };
     return `<h3 class="gname">${esc(g.name)}</h3>
       <p class="gthesis">${esc(g.thesis||"")}</p>
       <div class="tscroll"><table class="wt"><thead><tr>
@@ -849,7 +998,7 @@ function renderWatchlist(WL){
         <th class="l">상위 수출국</th>
       </tr></thead><tbody>` +
       rows.map(r => r.ready ? `<tr class="itemrow">
-        <td class="l"><span class="it">${esc(r.name)}</span>${pu(r)}
+        <td class="l"><span class="it">${esc(r.name)}</span>${pu(r)}${lw(r)}
           <span class="tk">${esc((r.tickers||[]).join(" · "))}</span></td>
         <td class="l hsk">${r.hsk.map(esc).join("<br>")}</td>
         <td>${fm(r.usd)}</td>
@@ -883,7 +1032,7 @@ function selectTab(key){
   [...document.querySelectorAll(".tab")].forEach(b =>
     b.setAttribute("aria-selected", String(b.dataset.key === key)));
   if (key === SCAN_KEY){
-    if (WATCH || UNI) renderScan(WATCH);
+    if (WATCH || UNI || CHAINS) renderScan(WATCH);
     else document.getElementById("view").innerHTML =
       `<div class="empty"><h3>전산업 스캐너 — 아직 수집 전입니다</h3>
        <p>워치리스트는 <b>품목별 국가별 API</b>를 따로 받습니다. 섹터 수집과 별개의 단계입니다.</p>
@@ -904,15 +1053,16 @@ function selectTab(key){
 // 섹터(manifest)와 워치리스트는 **서로 독립**이다. 한쪽이 없어도 다른 쪽은 떠야 한다.
 // (초기에 manifest 로딩 실패가 스캐너까지 같이 죽이는 구조였다)
 Promise.allSettled([getJSON("data/manifest.json"), getJSON("data/watchlist.json"),
-                    getJSON("data/universe.json")])
-  .then(([mr, wr, ur]) => {
+                    getJSON("data/universe.json"), getJSON("data/chains.json")])
+  .then(([mr, wr, ur, cr]) => {
     MANIFEST = mr.status === "fulfilled" ? mr.value : {sectors: []};
     WATCH    = wr.status === "fulfilled" ? wr.value : null;
     UNI      = ur.status === "fulfilled" ? ur.value : null;
+    CHAINS   = cr.status === "fulfilled" ? cr.value : null;
     if (!WATCH && UNI) scanPane = "uni";
     const m = MANIFEST, ready = (m.sectors||[]).filter(s=>s.ready);
 
-    if (!ready.length && !WATCH && !UNI){
+    if (!ready.length && !WATCH && !UNI && !CHAINS){
       document.getElementById("view").innerHTML = `
         <div class="empty">
           <h3>아직 데이터가 없습니다</h3>
@@ -955,11 +1105,11 @@ Promise.allSettled([getJSON("data/manifest.json"), getJSON("data/watchlist.json"
 
     const want = location.hash.slice(1);
     const known = want === SCAN_KEY || (m.sectors||[]).some(s=>s.key===want);
-    selectTab(known ? want : ((WATCH||UNI) ? SCAN_KEY : ready[0].key));
+    selectTab(known ? want : ((WATCH||UNI||CHAINS) ? SCAN_KEY : ready[0].key));
   });
 
 const reflow = () => {
-  if (CUR === SCAN_KEY && (WATCH||UNI)) renderScan(WATCH);
+  if (CUR === SCAN_KEY && (WATCH||UNI||CHAINS)) renderScan(WATCH);
   else if (CUR && CACHE[CUR]) renderSector(CACHE[CUR]);
 };
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", reflow);
