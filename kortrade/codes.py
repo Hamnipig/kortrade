@@ -141,9 +141,18 @@ _ABBREV = {
 }
 
 
+# 규칙으로 안 풀리는 이름은 직접 못박는다. 양방향으로 같은 값이 나오기만 하면 된다.
+_SPECIAL = {
+    "전남광주통합특별시": "전남광주",
+    "전남광주통합": "전남광주",
+}
+
+
 def canon_sido(name: str) -> str:
     """시도명을 비교 가능한 축약 형태로 정규화한다. '충청북도'->'충북', '강원특별자치도'->'강원'."""
     s = name.replace(" ", "")
+    if s in _SPECIAL:
+        return _SPECIAL[s]
     for suf in _SUFFIXES:
         if s.endswith(suf) and len(s) > len(suf):
             s = s[: -len(suf)]
