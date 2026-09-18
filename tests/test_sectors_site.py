@@ -150,7 +150,7 @@ def test_watchlist_config_and_build():
     assert wl.active(), "active 품목이 하나도 없다"
     # 실측으로 확정한 코드들이 되돌아가지 않도록 못박는다 (전부 회귀 이력이 있다)
     fixed = {
-        "cathode":      "2841909020",   # 9010(코발트산리튬 $7M) 아님 — NCM $2,650M
+        "cathode_ncm":  "2841909020",   # 9010(코발트산리튬 $7M) 아님 — NCM $2,650M
         "die_bonder":   "8486402010",   # 8486.20 아님 — 호 자체가 다름
         "frozen_snack": "1905901090",   # 1040(비스킷·쿠키) 아님 — 분석47260-0388
         "kpop":         "8523491040",   # 8523.49.1060 은 존재하지 않음
@@ -163,6 +163,28 @@ def test_watchlist_config_and_build():
         assert code in it.hsk, f"{k}: {code} 가 빠졌다 (현재 {it.hsk})"
     assert "2841909010" not in wl.items[0].hsk, "코발트산리튬으로 되돌아갔다"
     assert all("2841909010" not in i.hsk for i in wl.items), "코발트산리튬($7M)으로 되돌아갔다"
+
+    # ── 합산 원칙: 사이클이 다른 코드를 한 항목에 합치지 않았는지 (2026-09-18 감사) ──
+    # 실측 월별 증감률 상관이 0.4 미만이라 분리를 확정한 짝들. 되돌리면 큰 쪽이 작은 쪽을 덮는다.
+    must_split = [
+        ("2841909020", "2841909030", "양극재 NCM/NCA (r=-0.06)"),
+        ("8710001000", "8710009000", "전차 본체/부분품 (r=0.13)"),
+        ("8710001000", "8710002000", "전차/장갑차 (r=0.25)"),
+        ("2103909090", "2103909030", "소스/혼합조미료 (r=0.02)"),
+        ("8701922000", "8701942000", "트랙터 소형/대형 (r=0.31)"),
+        ("8507602000", "8507603000", "2차전지 EV/ESS (r=-0.04)"),
+        ("8507603000", "8507609000", "2차전지 ESS/기타"),
+        ("8542323000", "8542324000", "MCP/MCO (r=0.52)"),
+        ("9018908110", "9018909000", "미용기기 장비/부품"),
+        ("3304991000", "3304999000", "기초화장품/잔여 (성장률 +29% vs +52%)"),
+    ]
+    for a, b, why in must_split:
+        for it in wl.items:
+            assert not (a in it.hsk and b in it.hsk), f"{it.key}: {why} 를 다시 합쳤다"
+
+    # 감사에서 발견해 추가한 항목들이 사라지지 않았는지
+    for k in ("cell_other", "skincare_other", "aesthetic_parts", "armor_apc", "cathode_nca"):
+        assert any(i.key == k and i.active for i in wl.items), f"감사 산출물 '{k}' 가 빠졌다"
     # 검증 안 된 코드가 조용히 active 로 올라가는 것을 막는다
     for it in wl.active():
         assert it.evidence.strip(), f"{it.key}: 근거 없이 active"
