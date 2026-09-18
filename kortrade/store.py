@@ -35,6 +35,24 @@ CREATE INDEX IF NOT EXISTS ix_sector_hs      ON sector_trade (hs_code, period);
 CREATE INDEX IF NOT EXISTS ix_sector_hs6     ON sector_trade (hs6, period);
 CREATE INDEX IF NOT EXISTS ix_sector_country ON sector_trade (country_code, period);
 
+-- 전산업 유니버스. 97개 장을 전수 수집해 **HS 4단위로 집계**해 담는다.
+-- 10단위 전수(약 12,000코드 x 80개월 = 96만행)는 DB 가 GitHub 100MB 파일 제한을
+-- 넘기므로 담지 않는다. 4단위면 약 1,200 x 80 = 10만행으로 10~20MB 수준이다.
+-- 10단위가 필요한 품목은 config/watchlist.yaml 에 올려 sector_trade 로 따로 받는다.
+CREATE TABLE IF NOT EXISTS universe_trade (
+    period     TEXT NOT NULL,           -- 'YYYY-MM'
+    hs4        TEXT NOT NULL,           -- 4단위 항
+    hs2        TEXT NOT NULL,           -- 2단위 장 (롤업 키)
+    top_name   TEXT,                    -- 그 항에서 금액이 가장 큰 10단위의 공식 품명
+    exp_usd    INTEGER,
+    exp_wgt    INTEGER,
+    imp_usd    INTEGER,
+    fetched_at TEXT NOT NULL,
+    UNIQUE (period, hs4)
+);
+CREATE INDEX IF NOT EXISTS ix_uni_hs4 ON universe_trade (hs4, period);
+CREATE INDEX IF NOT EXISTS ix_uni_hs2 ON universe_trade (hs2, period);
+
 CREATE TABLE IF NOT EXISTS region_trade (
     period       TEXT NOT NULL,
     hs_code      TEXT NOT NULL,          -- HS 6단위
@@ -98,6 +116,9 @@ SECTOR_KEY = ["period", "hs_code", "country_code"]
 REGION_COLS = ["period", "hs_code", "hs_name", "sido_cd", "sido_name", "sigungu_name",
                "exp_cnt", "exp_usd", "imp_cnt", "imp_usd", "bal_usd"]
 REGION_KEY = ["period", "hs_code", "sido_cd", "sigungu_name"]
+
+UNIVERSE_COLS = ["period", "hs4", "hs2", "top_name", "exp_usd", "exp_wgt", "imp_usd"]
+UNIVERSE_KEY = ["period", "hs4"]
 
 _NUMERIC = {"exp_usd", "exp_wgt", "imp_usd", "imp_wgt", "bal_usd", "exp_cnt", "imp_cnt"}
 
@@ -194,6 +215,9 @@ class Store:
 
     def upsert_region(self, rows: Iterable[dict]) -> dict[str, int]:
         return self._upsert("region_trade", REGION_COLS, REGION_KEY, rows)
+
+    def upsert_universe(self, rows: Iterable[dict]) -> dict[str, int]:
+        return self._upsert("universe_trade", UNIVERSE_COLS, UNIVERSE_KEY, rows)
 
     # ------------------------------------------------------------ 시도코드
 
