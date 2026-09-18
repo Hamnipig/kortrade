@@ -106,6 +106,7 @@ jobs:
           python scripts/build_site.py
           python scripts/build_watchlist.py
           python scripts/build_universe.py
+          python scripts/build_chains.py
 
       # DB 가 GitHub 파일 한도(100MB)에 가까워지면 조용히 push 가 깨진다. 미리 경고한다.
       - name: DB 크기 점검
