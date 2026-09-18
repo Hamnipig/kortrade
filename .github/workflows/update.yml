@@ -91,10 +91,34 @@ jobs:
           if [ "${{ inputs.full_refresh }}" = "true" ]; then EXTRA="--revision-window 999"; fi
           python scripts/run_watchlist.py --start "$START" $EXTRA
 
+      # 전산업 유니버스 — 97개 장 전수. 워치리스트 밖에서 뜨는 것을 잡는 레이어.
+      - name: 수집 — 전산업 유니버스
+        env:
+          DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
+          START: ${{ inputs.start || '202001' }}
+        run: |
+          EXTRA=""
+          if [ "${{ inputs.full_refresh }}" = "true" ]; then EXTRA="--revision-window 999"; fi
+          python scripts/run_universe.py --start "$START" $EXTRA
+
       - name: 사이트 데이터 생성
         run: |
           python scripts/build_site.py
           python scripts/build_watchlist.py
+          python scripts/build_universe.py
+
+      # DB 가 GitHub 파일 한도(100MB)에 가까워지면 조용히 push 가 깨진다. 미리 경고한다.
+      - name: DB 크기 점검
+        if: always()
+        run: |
+          [ -f data/kortrade.sqlite ] || exit 0
+          MB=$(du -m data/kortrade.sqlite | cut -f1)
+          echo "DB 크기: ${MB}MB"
+          if [ "$MB" -ge 90 ]; then
+            echo "::error::DB 가 ${MB}MB 입니다. GitHub 파일 한도 100MB 에 근접했습니다 — 유니버스 적재 단위를 줄이거나 오래된 월을 정리하세요."
+          elif [ "$MB" -ge 60 ]; then
+            echo "::warning::DB 가 ${MB}MB 입니다. 100MB 한도를 주시하세요."
+          fi
 
       # 수집이 중간에 실패해도 그때까지 쓴 수백~수천 콜은 살려야 한다.
       # DB(fetch_log)를 커밋해 두면 재실행이 확정 구간을 건너뛴다.
