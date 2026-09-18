@@ -137,6 +137,48 @@ tbody tr.newcat td{border-top:1px solid var(--rule)}
 .toggle:hover{color:var(--ink)}
 .toggle:focus-visible{outline:2px solid var(--s1);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* ===== 전산업 스캐너 ===== */
+.thesis{color:var(--ink-2);font-size:13px;margin:0 0 16px;max-width:76ch}
+.sig{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-bottom:22px}
+.sigcard{background:var(--surface);border:1px solid var(--rule);border-radius:3px;padding:12px 14px}
+.sigcard h4{margin:0 0 2px;font-size:12px;font-weight:600;letter-spacing:.02em}
+.sigcard .sub{font-size:11px;color:var(--ink-3);margin-bottom:8px}
+.sigcard ol{margin:0;padding-left:0;list-style:none;font-size:13px}
+.sigcard li{display:flex;justify-content:space-between;gap:10px;padding:3px 0;
+  border-top:1px solid var(--rule)}
+.sigcard li:first-child{border-top:0}
+.sigcard .nm{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sigcard .vl{font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums;flex:none}
+.sigcard.empty-c ol{color:var(--ink-3);font-size:12px}
+.gname{font-size:12px;font-weight:600;letter-spacing:.02em;margin:26px 0 2px;
+  padding-top:14px;border-top:1px solid var(--rule)}
+.gthesis{font-size:11.5px;color:var(--ink-3);margin:0 0 8px}
+.wt{width:100%;border-collapse:collapse;font-size:12.5px}
+.wt th{font-weight:500;color:var(--ink-3);font-size:11px;text-align:right;padding:5px 7px;
+  border-bottom:1px solid var(--rule);white-space:nowrap}
+.wt td{text-align:right;padding:6px 7px;border-bottom:1px solid var(--rule);
+  font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.wt th.l,.wt td.l{text-align:left;font-family:var(--sans)}
+.wt tr.dim td{color:var(--ink-3)}
+.wt tbody tr:hover{background:var(--surface-2)}
+.wt .it{font-weight:600;color:var(--ink)}
+.wt .tk{font-size:11px;color:var(--ink-3);display:block;font-family:var(--sans)}
+.pu{display:inline-block;font-size:9.5px;padding:0 4px;border-radius:2px;line-height:15px;
+  border:1px solid var(--rule);color:var(--ink-3);margin-left:5px;vertical-align:1px}
+.pu.high{border-color:var(--s3);color:var(--s3)}
+.idea{font-size:11.5px;color:var(--ink-2);font-family:var(--sans);white-space:normal;
+  max-width:44ch;line-height:1.45}
+.quad{font-size:10px;fill:var(--ink-3)}
+
+.wt td.hsk{font-family:var(--mono);font-size:10px;color:var(--ink-3);line-height:1.5}
+.wt td.cty{font-family:var(--sans);font-size:11px;line-height:1.5}
+.wt td.cty .sh{font-family:var(--mono);color:var(--ink-3);font-size:10px}
+.wt tr.itemrow td{border-bottom:0;padding-bottom:3px}
+.wt tr.idearow td{padding:0 7px 8px;color:var(--ink-3);font-size:11.5px;font-family:var(--sans);
+  white-space:normal;line-height:1.5;max-width:none}
+.wt tr.itemrow:hover td,.wt tr.itemrow:hover + tr.idearow td{background:var(--surface-2)}
+.wt tbody tr:hover{background:none}
 </style>
 </head>
 <body>
@@ -477,12 +519,206 @@ function renderEmpty(entry){
     </div>`;
 }
 
+/* ================= 전산업 스캐너 ================= */
+const GC = {consumer:"--s1", ithw:"--s2", heavy:"--s3", content:"--s4"};
+const CLAMP = {x:[-70,140], y:[-60,90]};   // 극단값은 가장자리로 밀고 표시만 바꾼다
+
+function drawPQ(mount, WL){
+  const W=760,H=430,M={t:18,r:26,b:46,l:56}, iw=W-M.l-M.r, ih=H-M.t-M.b;
+  const pts = WL.items.filter(r => r.ready && r.qYoy!=null && r.pYoy!=null);
+  if (pts.length < 2){
+    mount.innerHTML = '<p class="pnote">물량·단가 YoY를 둘 다 계산할 수 있는 품목이 아직 부족합니다 (전년 동기 12개월 필요).</p>';
+    return;
+  }
+  const cx0=CLAMP.x[0], cx1=CLAMP.x[1], cy0=CLAMP.y[0], cy1=CLAMP.y[1];
+  const X = v => M.l + (Math.min(cx1,Math.max(cx0,v)) - cx0)/(cx1-cx0)*iw;
+  const Y = v => M.t + ih - (Math.min(cy1,Math.max(cy0,v)) - cy0)/(cy1-cy0)*ih;
+  const maxU = Math.max(...pts.map(p=>p.usd));
+  const R = u => 5 + Math.sqrt(Math.max(u,0)/maxU)*22;
+
+  const s = el("svg",{viewBox:`0 0 ${W} ${H}`, role:"img",
+    "aria-label":"물량 대비 단가 변화 사분면 맵"});
+
+  // 사분면 배경 — 우상(수요 확장)만 은은하게 강조
+  s.appendChild(el("rect",{x:X(0),y:M.t,width:Math.max(0,M.l+iw-X(0)),
+    height:Math.max(0,Y(0)-M.t),fill:cv("--s3"),opacity:.05}));
+
+  [cy0,0,cy1].concat([-30,30,60]).filter(v=>v>cy0&&v<cy1).forEach(v=>{
+    s.appendChild(el("line",{x1:M.l,x2:M.l+iw,y1:Y(v),y2:Y(v),
+      class: v===0?"ax":"gl"}));
+    s.appendChild(Object.assign(el("text",{x:M.l-8,y:Y(v)+3.5,class:"tk","text-anchor":"end"}),
+      {textContent:(v>0?"+":"")+v+"%"}));
+  });
+  [-50,0,50,100].filter(v=>v>=cx0&&v<=cx1).forEach(v=>{
+    s.appendChild(el("line",{y1:M.t,y2:M.t+ih,x1:X(v),x2:X(v), class: v===0?"ax":"gl"}));
+    s.appendChild(Object.assign(el("text",{x:X(v),y:M.t+ih+16,class:"tk","text-anchor":"middle"}),
+      {textContent:(v>0?"+":"")+v+"%"}));
+  });
+
+  const quad = (x,y,t,anchor) => s.appendChild(Object.assign(
+    el("text",{x,y,class:"quad","text-anchor":anchor}), {textContent:t}));
+  quad(M.l+iw-4, M.t+13, "물량↑ 단가↑ · 수요 확장", "end");
+  quad(M.l+iw-4, M.t+ih-6, "물량↑ 단가↓ · 점유율 경쟁", "end");
+  quad(M.l+4,    M.t+13, "물량↓ 단가↑ · 믹스 개선·감산", "start");
+  quad(M.l+4,    M.t+ih-6, "물량↓ 단가↓ · 위축", "start");
+
+  s.appendChild(Object.assign(el("text",{x:M.l+iw/2,y:H-6,class:"tk","text-anchor":"middle"}),
+    {textContent:"물량(중량) YoY →"}));
+  s.appendChild(Object.assign(el("text",{x:14,y:M.t+ih/2,class:"tk","text-anchor":"middle",
+    transform:`rotate(-90 14 ${M.t+ih/2})`}), {textContent:"단가($/kg) YoY"}));
+
+  const placed = [];
+  pts.slice().sort((a,b)=>b.usd-a.usd).forEach(p=>{
+    const x=X(p.qYoy), y=Y(p.pYoy), r=R(p.usd);
+    const clamped = p.qYoy<cx0||p.qYoy>cx1||p.pYoy<cy0||p.pYoy>cy1;
+    const c = cv(GC[p.group] || "--s5");
+    const g = el("g",{});
+    g.appendChild(el("circle",{cx:x,cy:y,r:r+2,fill:cv("--surface")}));   // 2px 겹침 링
+    g.appendChild(el("circle",{cx:x,cy:y,r,fill:c,opacity:clamped?.3:.5,
+      stroke:c,"stroke-width":clamped?2:1.5,"stroke-dasharray":clamped?"3 2":""}));
+    g.style.cursor="pointer";
+    const html = `<b>${esc(p.name)}</b><br>${esc((p.tickers||[])[0]||"")}<br>`+
+      `금액 $${fm(p.usd)}M · YoY ${pct(p.yoy)}<br>`+
+      `물량 ${fm(p.kg)}톤 · YoY ${pct(p.qYoy)}<br>`+
+      `단가 $${p.p==null?"–":p.p.toLocaleString()}/kg · YoY ${pct(p.pYoy)}`+
+      (clamped?"<br>※ 축 범위 밖(점선)":"");
+    g.addEventListener("mousemove", e=>showTip(e, html));
+    g.addEventListener("mouseleave", hideTip);
+    s.appendChild(g);
+
+    // 큰 품목만 직접 라벨 — 모든 점에 숫자를 붙이지 않는다.
+    // 자리가 없으면 라벨을 **버린다**(겹쳐 찍느니 호버로 읽게 한다).
+    if (r >= 13){
+      const txt = p.name.length>11 ? p.name.slice(0,10)+"…" : p.name;
+      // 한글은 글자폭이 font-size 에 가깝고 라틴은 절반쯤이다. 한 글자 6.4px 로
+      // 잡았더니 실제보다 40% 좁게 계산돼 라벨이 겹쳤다.
+      const w = [...txt].reduce((a,ch)=> a + (/[\u3131-\uD79D]/.test(ch) ? 11.2 : 6), 0) + 6;
+      const free = (lx,ly) => lx-w/2 > M.l+2 && lx+w/2 < M.l+iw-2 &&
+        ly > M.t+10 && ly < M.t+ih-4 &&
+        !placed.some(q => Math.abs(q.x-lx) < (q.w+w)/2+8 && Math.abs(q.y-ly) < 15) &&
+        !pts.some(o => o!==p && Math.abs(X(o.qYoy)-lx) < w/2+R(o.usd) &&
+                       Math.abs(Y(o.pYoy)-ly) < R(o.usd)+5);
+      // 위/아래로만 밀어 올린다. 옆으로 밀면 이웃 버블 위에 얹히기 쉽다.
+      let put = null;
+      for (const dy of [-(r+7), r+15, -(r+21), r+29, -(r+35), r+43]){
+        if (free(x, y+dy)) { put = {x, y:y+dy}; break; }
+      }
+      if (put){
+        s.appendChild(Object.assign(
+          el("text",{x:put.x,y:put.y,class:"dlab","text-anchor":"middle"}), {textContent:txt}));
+        placed.push({x:put.x, y:put.y, w});
+      }
+    }
+  });
+  mount.innerHTML = ""; mount.appendChild(s);
+}
+
+function sigCard(title, sub, keys, WL, fmt){
+  const rows = keys.map(k => WL.items.find(r=>r.key===k)).filter(Boolean);
+  return `<div class="sigcard${rows.length?"":" empty-c"}">
+    <h4>${esc(title)}</h4><div class="sub">${esc(sub)}</div>
+    <ol>${rows.length ? rows.map(r=>`<li><span class="nm">${esc(r.name)}</span>
+      <span class="vl ${fmt(r).n>0?'up':'down'}">${esc(fmt(r).t)}</span></li>`).join("")
+      : "<li>해당 품목 없음</li>"}</ol></div>`;
+}
+
+function renderScan(WL){
+  const v = document.getElementById("view");
+  const H = WL.highlights || {};
+  v.innerHTML = `
+    <p class="thesis">관세청 품목별·국가별 통관 데이터를 HSK 10단위로 받아, 금액을
+      <b>물량(Q, 중량)</b>과 <b>단가(P, $/kg)</b>로 분해합니다. 금액만 보면 단가 하락을
+      물량 증가로, 단가 상승을 수요 회복으로 오독합니다. 여기서 눈에 띄는 품목을
+      위 섹터 탭에서 시군구 단위로 파고듭니다.</p>
+    <div class="sig" id="sig"></div>
+    <div class="panels">
+      <div class="panel p12">
+        <div class="phead"><h3 class="ptitle">물량–단가 사분면</h3>
+          <span class="unit">버블 = 최근 ${WL.window}개월 수출액</span></div>
+        <p class="pnote">가로축은 중량 증감, 세로축은 내재 단가 증감. 같은 금액 증가라도
+          오른쪽 아래(물량으로 버는 중)와 왼쪽 위(단가로 버는 중)는 투자 논리가 반대입니다.
+          축 범위를 벗어난 품목은 점선으로 가장자리에 표시합니다.</p>
+        <div class="legend" id="lg2"></div>
+        <div id="pq"></div>
+      </div>
+    </div>
+    <div id="wtabs"></div>
+    <div class="warn"><b>해석 한계</b> — 관세청 수출액은 <b>신고 기준</b>이지 특정 기업의
+      매출이 아닙니다. 하나의 HSK를 여러 기업이 공유하므로, 티커는 참고용입니다.
+      <b>순도 高</b> 표시가 붙은 품목만 개별 기업 프록시로 쓸 수 있습니다.
+      선박·항공은 편의치적 때문에 국가별이 최종 수요처와 무관합니다.</div>`;
+
+  document.getElementById("sig").innerHTML =
+    sigCard("가속 상위", `최근 ${WL.recent}M YoY − ${WL.window}M YoY`, H.accel||[], WL,
+            r=>({n:r.accel, t:(r.accel>0?"+":"")+r.accel+"%p"})) +
+    sigCard("물량(Q) 턴어라운드", "누적은 감소, 최근 3개월은 증가 전환", H.qTurn||[], WL,
+            r=>({n:r.qQ3, t:pct(r.qQ3)})) +
+    sigCard("단가(P) 전환", "누적은 하락, 최근 3개월은 상승 전환", H.pTurn||[], WL,
+            r=>({n:r.pQ3, t:pct(r.pQ3)})) +
+    sigCard("감속 상위", "추세가 꺾이는 중 — 비중 축소 후보", H.decel||[], WL,
+            r=>({n:r.accel, t:r.accel+"%p"}));
+
+  document.getElementById("lg2").innerHTML = (WL.groups||[]).map(g=>
+    `<span class="lg"><span class="sw" style="background:var(${GC[g.key]||"--s5"})"></span>${esc(g.name)}</span>`
+  ).join("");
+  drawPQ(document.getElementById("pq"), WL);
+
+  document.getElementById("wtabs").innerHTML = (WL.groups||[]).map(g=>{
+    const rows = WL.items.filter(r=>r.group===g.key);
+    if (!rows.length) return "";
+    const pu = r => r.purity==="high" ? '<span class="pu high">순도 高</span>'
+              : r.purity==="mid" ? '<span class="pu">순도 中</span>'
+              : '<span class="pu">순도 低</span>';
+    return `<h3 class="gname">${esc(g.name)}</h3>
+      <p class="gthesis">${esc(g.thesis||"")}</p>
+      <div class="tscroll"><table class="wt"><thead><tr>
+        <th class="l">품목 / 관련 상장사</th><th class="l">HSK</th>
+        <th>${WL.window}M $M</th><th>YoY</th><th>가속</th>
+        <th>단가 $/kg</th><th>P YoY</th><th>물량 톤</th><th>Q YoY</th>
+        <th class="l">상위 수출국</th>
+      </tr></thead><tbody>` +
+      rows.map(r => r.ready ? `<tr class="itemrow">
+        <td class="l"><span class="it">${esc(r.name)}</span>${pu(r)}
+          <span class="tk">${esc((r.tickers||[]).join(" · "))}</span></td>
+        <td class="l hsk">${r.hsk.map(esc).join("<br>")}</td>
+        <td>${fm(r.usd)}</td>
+        <td class="${r.yoy>0?'up':'down'}">${r.yoy==null?"–":pct(r.yoy)}</td>
+        <td>${r.accel==null?"–":`<span class="chip ${r.accel>0?'up':'down'}">${r.accel>0?"+":""}${r.accel}%p</span>`}</td>
+        <td>${r.p==null?"–":r.p.toLocaleString(undefined,{maximumFractionDigits:r.p<100?2:0})}</td>
+        <td class="${r.pYoy>0?'up':'down'}">${r.pYoy==null?"–":pct(r.pYoy)}</td>
+        <td>${fm(r.kg)}</td>
+        <td class="${r.qYoy>0?'up':'down'}">${r.qYoy==null?"–":pct(r.qYoy)}</td>
+        <td class="l cty">${(r.countries||[]).slice(0,3).map(c=>
+          `${esc(c.name)} <span class="sh">${c.share==null?"":c.share+"%"}</span>`).join("<br>") || "–"}</td>
+      </tr>
+      <tr class="idearow"><td class="l idea" colspan="10">${esc(r.idea)}</td></tr>`
+      : `<tr class="itemrow dim">
+        <td class="l"><span class="it">${esc(r.name)}</span><span class="pu">미검증</span>
+          <span class="tk">${esc((r.tickers||[]).join(" · "))}</span></td>
+        <td class="l" colspan="9" style="white-space:normal;font-family:var(--sans);font-size:11.5px">
+          ${esc(r.evidence)}</td></tr>
+        <tr class="idearow dim"><td class="l idea" colspan="10">${esc(r.idea)}</td></tr>`).join("") +
+      "</tbody></table></div>";
+  }).join("");
+}
+
 /* ================= shell ================= */
+const SCAN_KEY = "scan";
+let WATCH = null;
+
 function selectTab(key){
   CUR = key; showAll = false;
   location.hash = key;
   [...document.querySelectorAll(".tab")].forEach(b =>
     b.setAttribute("aria-selected", String(b.dataset.key === key)));
+  if (key === SCAN_KEY){
+    if (WATCH) renderScan(WATCH);
+    else document.getElementById("view").innerHTML =
+      `<div class="empty"><h3>전산업 스캐너 — 아직 수집 전입니다</h3>
+       <p>워치리스트는 <b>품목별 국가별 API</b>를 따로 받습니다. 섹터 수집과 별개의 단계입니다.</p>
+       <code>python scripts/run_watchlist.py &amp;&amp; python scripts/build_watchlist.py</code></div>`;
+    return;
+  }
   const entry = MANIFEST.sectors.find(s => s.key === key);
   if (!entry) return;
   if (!entry.ready){ renderEmpty(entry); return; }
@@ -494,47 +730,67 @@ function selectTab(key){
       `<div class="empty"><h3>불러오지 못했습니다</h3><p>data/${esc(key)}.json — ${esc(err.message)}</p></div>`; });
 }
 
-getJSON("data/manifest.json")
-  .then(m => {
-    MANIFEST = m;
-    const ready = m.sectors.filter(s=>s.ready);
+// 섹터(manifest)와 워치리스트는 **서로 독립**이다. 한쪽이 없어도 다른 쪽은 떠야 한다.
+// (초기에 manifest 로딩 실패가 스캐너까지 같이 죽이는 구조였다)
+Promise.allSettled([getJSON("data/manifest.json"), getJSON("data/watchlist.json")])
+  .then(([mr, wr]) => {
+    MANIFEST = mr.status === "fulfilled" ? mr.value : {sectors: []};
+    WATCH    = wr.status === "fulfilled" ? wr.value : null;
+    const m = MANIFEST, ready = (m.sectors||[]).filter(s=>s.ready);
+
+    if (!ready.length && !WATCH){
+      document.getElementById("view").innerHTML = `
+        <div class="empty">
+          <h3>아직 데이터가 없습니다</h3>
+          <p>첫 수집이 끝나면 이 자리에 대시보드가 나타납니다. GitHub Actions의
+          <b>Update trade data</b> 워크플로를 수동 실행하거나, 매월 17일 예약 실행을 기다리세요.</p>
+          <code>python scripts/run_update.py --sectors all &amp;&amp; python scripts/build_site.py</code>
+        </div>`;
+      document.getElementById("meta").textContent = "";
+      return;
+    }
+
+    const asOf = WATCH?.asOf || ready[0]?.asOf;
     document.getElementById("meta").innerHTML =
-      `갱신 <b>${esc(m.generatedAt)}</b><br>` +
-      (ready[0]?.asOf ? `기준월 <b>${esc(ready[0].asOf)}</b><br>` : "") +
+      `갱신 <b>${esc(m.generatedAt || WATCH?.builtAt || "–")}</b><br>` +
+      (asOf ? `기준월 <b>${esc(asOf)}</b><br>` : "") +
       `단위 <b>백만 USD (FOB)</b>`;
-    document.getElementById("tabs").innerHTML = m.sectors.map(s=>
+
+    const nScan = WATCH ? WATCH.items.filter(r=>r.ready).length + "품목" : "미수집";
+    document.getElementById("tabs").innerHTML =
+      `<button class="tab" role="tab" data-key="${SCAN_KEY}" aria-selected="false">
+        전산업 스캐너<span class="tnum">${esc(nScan)}</span></button>` +
+      (m.sectors||[]).map(s=>
       `<button class="tab" role="tab" data-key="${esc(s.key)}" aria-selected="false">
         ${esc(s.name)}${s.ready?`<span class="tnum">$${fm(s.ytd)}M</span>`
           :`<span class="tnum">미수집</span>`}</button>`).join("");
     document.getElementById("tabs").addEventListener("click", e=>{
       const b=e.target.closest(".tab"); if(b) selectTab(b.dataset.key);
     });
+
+    const cov = m.coverage || {};
     document.getElementById("foot").innerHTML =
-      `출처: <b>${esc(m.source)}</b> · 금액은 신고 미화금액(FOB) 기준 · ` +
-      `원자료는 천 달러 단위이며 달러로 환산 · 공표는 매월 15일경, 전월까지 현행화되며 ` +
-      `<b>과거 월이 소급 정정</b>됩니다 · 관세청 시군구 API는 HS 6단위까지만 조회됩니다 · ` +
-      `수집 범위 ${esc(m.coverage?.region_trade?.from ?? "?")}–${esc(m.coverage?.region_trade?.to ?? "?")}, ` +
-      `${(m.coverage?.region_trade?.rows ?? 0).toLocaleString()}행 · ` +
-      `소급 정정 감지 ${(m.coverage?.revisions ?? 0).toLocaleString()}건`;
+      `출처: <b>${esc(m.source || "관세청 수출입무역통계 (공공데이터포털 data.go.kr)")}</b> · ` +
+      `금액은 신고 미화금액(FOB) 기준 · 원자료는 천 달러 단위이며 달러로 환산 · ` +
+      `공표는 매월 15일경, 전월까지 현행화되며 <b>과거 월이 소급 정정</b>됩니다 · ` +
+      `섹터 탭은 시군구 API라 HS 6단위까지, 스캐너 탭은 품목별·국가별 API라 <b>HSK 10단위</b>입니다 · ` +
+      `수집 범위 ${esc(cov.region_trade?.from ?? "?")}–${esc(cov.region_trade?.to ?? "?")}, ` +
+      `${(cov.region_trade?.rows ?? 0).toLocaleString()}행 · ` +
+      `소급 정정 감지 ${(cov.revisions ?? 0).toLocaleString()}건`;
+
     const want = location.hash.slice(1);
-    selectTab(m.sectors.find(s=>s.key===want)?.key || (ready[0]||m.sectors[0])?.key);
-  })
-  .catch(err => {
-    document.getElementById("view").innerHTML = `
-      <div class="empty">
-        <h3>아직 데이터가 없습니다</h3>
-        <p>첫 수집이 끝나면 이 자리에 대시보드가 나타납니다. GitHub Actions의
-        <b>Update trade data</b> 워크플로를 수동 실행하거나, 매월 17일 예약 실행을 기다리세요.</p>
-        <code>python scripts/run_update.py --sectors all &amp;&amp; python scripts/build_site.py</code>
-      </div>`;
-    document.getElementById("meta").textContent = "";
+    const known = want === SCAN_KEY || (m.sectors||[]).some(s=>s.key===want);
+    selectTab(known ? want : (WATCH ? SCAN_KEY : ready[0].key));
   });
 
-const reflow = () => { if (CUR && CACHE[CUR]) renderSector(CACHE[CUR]); };
+const reflow = () => {
+  if (CUR === SCAN_KEY && WATCH) renderScan(WATCH);
+  else if (CUR && CACHE[CUR]) renderSector(CACHE[CUR]);
+};
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", reflow);
 addEventListener("hashchange", () => {
   const k = location.hash.slice(1);
-  if (k && k !== CUR && MANIFEST?.sectors.some(s=>s.key===k)) selectTab(k);
+  if (k && k !== CUR && (k === SCAN_KEY || MANIFEST?.sectors.some(s=>s.key===k))) selectTab(k);
 });
 </script>
 </body>
