@@ -360,6 +360,95 @@ def test_universe_layer():
     print(f"  ✓ 유니버스 — 장 97개, 항 {len(pl['items'])}개, 롤업 정합, 지표 공유")
 
 
+def test_value_chain_localization():
+    """해외 현지생산 보정 — 실측 對미 2차전지 수치로 판정 로직을 고정한다.
+
+    이 프로젝트의 가장 큰 오독 위험: 완제품 수출이 줄었다는 이유만으로
+    수요 감소라 판단하는 것. 실제로는 미국 현지 조립 전환이었다.
+    """
+    import tempfile, importlib.util
+    from pathlib import Path
+    from kortrade import chains as C
+    from kortrade.store import Store
+
+    cs = C.load()
+    errs = cs.validate()
+    assert not errs, errs
+    assert {c.key for c in cs.chains} >= {"battery", "auto"}
+
+    # 장비는 수요 합계에서 빠져야 한다 (설비투자 흐름이라 섞으면 둘 다 흐려진다)
+    assert "equipment" not in C.DEMAND_STAGES
+    assert set(C.DEMAND_STAGES) == {"final", "component", "material"}
+
+    # 판정 로직 — 완제품↓ + 체인↑ 이면 반드시 '현지화'
+    assert C.verdict(-13.0, 12.9, 1.56, 0.70)["code"] == "localizing"
+    assert C.verdict(-13.0, -8.0, 1.56, 0.70)["code"] == "mixed"      # 체인도 감소 + 현지화 급등
+    assert C.verdict(-13.0, -8.0, 0.72, 0.70)["code"] == "contracting"  # 순수 위축
+    assert C.verdict(20.0, 25.0, 0.72, 0.70)["code"] == "expanding"
+    assert C.verdict(None, 5.0, 1.0, 1.0)["code"] == "unknown"
+    assert C.localization(0, 100) is None
+
+    # 실측 對미 월별을 그대로 넣어 결과를 고정한다 (2025-01~2026-08)
+    CELL = {
+        "8507603000": [151.4,149.4,154.3,101.8,122.9,183.2,165.9,148.3,156.3,127.5,261.2,245.1,
+                       114,153.5,235.3,116.8,181.1,88,81.3,54.2],
+        "8507602000": [16.7,20.6,21.9,128.4,20,17.5,24.4,26.3,33.5,21.1,20,15.6,
+                       18,36.6,102.3,29.5,13.2,19,11.8,20.9],
+        "8507609000": [9.3,22.5,13.7,23.8,30.1,29.6,29,19.1,20.1,10.7,9.6,22.3,
+                       5.1,51.5,34.8,44.9,50.2,56.8,80.1,68.3]}
+    UP = {
+        "8507909000": [33.3,42.2,40.7,32,22.3,18.5,24.3,14.1,25.2,27.2,43.2,52.6,
+                       52.7,45.3,64.8,73.8,83.1,111.2,104.2,127.3],
+        "2841909020": [35.1,56.7,76,85.3,104.7,116.4,153.8,74.7,81.4,28.7,44.7,67.6,
+                       19.2,24.8,52.3,64.2,64.7,87.1,120.9,113.1],
+        "2841909030": [45.4,31.6,20.5,8.7,0,4.9,19.5,15.2,21.7,16.8,11.6,12.2,
+                       1.4,20.2,27.8,27.8,23.3,18.6,37.1,17.6],
+        "3801101000": [0.1,1.8,1.6,2.4,2.8,2.8,3.2,2.5,4,1.6,3.1,2.1,
+                       2.3,1.6,2.5,3.5,3.8,3.8,4.8,2.9]}
+    periods = [f"2025-{m:02d}" for m in range(1, 13)] + [f"2026-{m:02d}" for m in range(1, 9)]
+
+    spec = importlib.util.spec_from_file_location("bc", ROOT / "scripts" / "build_chains.py")
+    bc = importlib.util.module_from_spec(spec); spec.loader.exec_module(bc)
+
+    with tempfile.TemporaryDirectory() as td:
+        st = Store(Path(td) / "c.sqlite")
+        rows = []
+        for d in (CELL, UP):
+            for code, vals in d.items():
+                for p_, v in zip(periods, vals):
+                    rows.append(dict(period=p_, hs_code=code, hs6=code[:6], hs_name="",
+                                     country_code="US", country_name="US",
+                                     exp_usd=int(v * 1e6), exp_wgt=int(v * 1e4),
+                                     imp_usd=0, imp_wgt=0, bal_usd=0))
+        st.upsert_sector(rows)
+        pl = bc.build(st, cs)
+        st.close()
+
+    bat = next(c for c in pl["chains"] if c["key"] == "battery")
+    us = next(v for v in bat["views"] if v["market"] == "US")
+    # 완제품은 거의 제자리인데 상류가 크게 늘어 체인 전체는 두 자릿수 성장
+    assert -1 < us["finalYoy"] < 6, us["finalYoy"]
+    assert us["upstreamYoy"] > 20, us["upstreamYoy"]
+    assert us["totalYoy"] > 10, us["totalYoy"]
+    # 최근 3개월 현지화지수가 8개월 평균보다 전환을 훨씬 잘 잡는다
+    assert us["locQ3"] > us["loc"], (us["locQ3"], us["loc"])
+    assert us["locQ3"] / us["locQ3Prev"] >= C.LOCALIZATION_JUMP, (us["locQ3"], us["locQ3Prev"])
+    # ★ 핵심: ESS셀은 −13% 지만 '수요 위축'이 아니라 '현지화'로 판정돼야 한다
+    ess = next(f for f in us["finals"] if f["code"] == "8507603000")
+    assert ess["yoy"] < -10, ess["yoy"]
+    assert ess["verdict"]["code"] == "localizing", ess["verdict"]
+
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    assert "renderChains" in html and "data/chains.json" in html
+    assert "localizationWarn" in html, "워치리스트에 현지화 경고가 없다"
+    assert "v.finals" in html, "배지가 체인 합계가 아니라 품목별 판정을 써야 한다"
+    assert "DART" in html, "통관 데이터의 한계 안내가 없다"
+    wf = (ROOT / ".github" / "workflows" / "update.yml").read_text(encoding="utf-8")
+    assert "build_chains.py" in wf, "자동 갱신에 체인이 빠졌다"
+    print(f"  ✓ 밸류체인 — ESS셀 {ess['yoy']}% → [{ess['verdict']['label']}], "
+          f"체인 {us['totalYoy']}%, 현지화 {us['locQ3Prev']}→{us['locQ3']}")
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     print(f"\n섹터·사이트 검증 — {len(tests)}개\n")
