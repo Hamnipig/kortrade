@@ -81,6 +81,38 @@ def shift(period: str, months: int) -> str:
     return f"{t // 12:04d}-{t % 12 + 1:02d}"
 
 
+# ------------------------------------------------------------------ 기간 검증
+#
+# ★ 회귀 방지 — 실측 사고(2026-09-21)
+#   응답의 priodMon 에 달(月)이 아닌 값이 섞여 들어와 period='YYYY-20' 같은 행이
+#   저장됐고, 빌드가 calendar.monthrange(2026, 20) 에서 죽었다.
+#   교훈 둘:
+#     (1) **달력에 없는 달은 애초에 저장하지 않는다.** 걸러내는 자리는 수집기다.
+#     (2) 화면 빌드는 이상한 행 하나 때문에 통째로 죽으면 안 된다. 건너뛰고 알린다.
+
+def parse_period(year, month) -> str | None:
+    """('2026','08') -> '2026-08'. 달력에 없는 값이면 None."""
+    try:
+        y, m = int(str(year).strip()), int(str(month).strip())
+    except (TypeError, ValueError):
+        return None
+    if not (2000 <= y <= 2100 and 1 <= m <= 12):
+        return None
+    return f"{y:04d}-{m:02d}"
+
+
+def split_period(period: str) -> tuple[int, int] | None:
+    """'2026-08' -> (2026, 8). 형식이 깨졌거나 달이 1~12 밖이면 None."""
+    s = (period or "").strip()
+    if len(s) < 7 or s[4] != "-":
+        return None
+    try:
+        y, m = int(s[:4]), int(s[5:7])
+    except ValueError:
+        return None
+    return (y, m) if 1 <= m <= 12 else None
+
+
 # ------------------------------------------------------------------ 지표
 
 def pct(now: float | None, prev: float | None, min_base: float = 0.0) -> float | None:

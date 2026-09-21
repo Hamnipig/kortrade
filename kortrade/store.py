@@ -247,6 +247,24 @@ class Store:
         revisions 에 남는 변경이 많아도 정상이다 — 오히려 그게 정보다."""
         return self._upsert("flash_trade", FLASH_COLS, FLASH_KEY, rows)
 
+    def purge_bad_flash(self) -> list[str]:
+        """달력에 없는 period 행을 지우고, 지운 값들을 돌려준다.
+
+        수집기가 이제 막아 주지만, **이미 커밋된 DB 에 남아 있는 행**은 따로
+        치워야 한다 (실측: period='YYYY-20' 행 때문에 빌드가 죽었다).
+        DB 를 레포에 커밋해 쓰는 구조라 한 번 들어간 불량 행은 계속 따라다닌다.
+        """
+        bad = [r["period"] for r in self.conn.execute(
+            "SELECT DISTINCT period FROM flash_trade"
+            " WHERE period IS NULL"
+            "    OR period NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]'"
+            "    OR CAST(substr(period, 6, 2) AS INTEGER) NOT BETWEEN 1 AND 12")]
+        if bad:
+            self.conn.executemany("DELETE FROM flash_trade WHERE period IS ?",
+                                  [(p,) for p in bad])
+            self.conn.commit()
+        return sorted(b for b in bad if b is not None)
+
     # ------------------------------------------------------------ 시도코드
 
     def save_sido_codes(self, mapping: dict[str, str], valid_from: str) -> None:

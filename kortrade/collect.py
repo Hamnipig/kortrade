@@ -21,7 +21,7 @@ import yaml
 from .client import (CustomsClient, CustomsAPIError, chunk_periods, hs6, month_range,
                      normalize_period, split_sigungu)
 from .codes import sido_code_for
-from .flash import UNIT_USD as FLASH_UNIT_USD, parse_dt
+from .flash import UNIT_USD as FLASH_UNIT_USD, parse_dt, parse_period
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -261,13 +261,16 @@ class Collector:
                     return totals
                 rows = self._fetch(endpoint, {"strtYymm": s, "endYymm": e}, force=True)
                 recs = []
+                rejected = []
                 for r in rows:
-                    try:
-                        period = f"{int(r.get('year')):04d}-{int(r.get('month')):02d}"
-                    except (TypeError, ValueError):
-                        continue
+                    # ★ 달력에 없는 달은 여기서 막는다. 한 번 저장되면 빌드가 죽는다
+                    #   (실측: priodMon 에 '20' 이 들어와 monthrange(2026, 20) 에서 터졌다).
+                    #   버린 행은 원문 그대로 남겨 로그에 찍는다 — 응답이 실제로 어떤
+                    #   모양인지 다음 실행 로그만 보면 알 수 있어야 한다.
+                    period = parse_period(r.get("year"), r.get("month"))
                     day_to, seq = parse_dt(r.get("dt", ""))
-                    if not seq:
+                    if not period or not seq:
+                        rejected.append(r)
                         continue
                     for i in range(11):
                         raw = r.get(f"v{i:02d}")
@@ -288,6 +291,14 @@ class Collector:
                 log.info("속보 %s %s~%s: %.1fs · %d행 → %s%s", kind, s, e,
                          self.client.last_elapsed, len(recs), st,
                          "" if left is None else f" (남은 예산 {left:.0f}s)")
+                if rejected:
+                    # 원문 그대로 찍는다. 이 API 는 문서가 부실해서, 버려진 행의
+                    # 실제 모양을 보는 것이 스펙을 알아내는 가장 빠른 길이다.
+                    log.warning("속보 %s %s~%s: 형식이 맞지 않아 버린 행 %d개",
+                                kind, s, e, len(rejected))
+                    for r in rejected[:5]:
+                        log.warning("  버린 행 원문: %s",
+                                    {k2: v for k2, v in r.items() if v not in (None, "")})
         return totals
 
     def collect_for_companies(self, companies: dict, start: str, end: str) -> dict[str, int]:
