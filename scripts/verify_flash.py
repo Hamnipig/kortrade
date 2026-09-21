@@ -114,9 +114,17 @@ def verify_items(store: Store, cfg: F.FlashConfig) -> dict:
 
 def country_totals(client: CustomsClient, code: str,
                    start: str, end: str) -> tuple[dict[str, float], str]:
-    """품목별국가별 API 로 그 나라의 **전체 품목** 월별 수출액을 받는다."""
+    """품목별국가별 API 로 그 나라의 **전체 품목** 월별 수출액을 받는다.
+
+    ★ 이 호출은 hsSgn 을 비워 보낸다. 응답 크기가 예측되지 않는 유일한 호출이라
+      (국가 합계 1행일 수도, 전 품목 수천 행일 수도 있다) 이 스크립트 전체에
+      벽시계 예산을 두고, 한 나라가 실패해도 나머지는 계속 간다.
+      EU 처럼 이 API 의 국가코드 체계에 없을 수 있는 값도 섞여 있다.
+    """
     acc: dict[str, list[tuple[int, float]]] = {}
     for s, e in chunk_periods(start, end, client.max_months_per_call):
+        if client.out_of_budget():
+            break
         for r in client.call("item_country", strtYymm=s, endYymm=e, cntyCd=code):
             p = normalize_period(r.get("period", ""))
             v = (r.get("exp_usd") or "").replace(",", "").strip()
@@ -140,18 +148,37 @@ def country_totals(client: CustomsClient, code: str,
     return out, mode
 
 
-def verify_countries(store: Store, cfg: F.FlashConfig, client: CustomsClient) -> dict:
+def verify_countries(store: Store, cfg: F.FlashConfig, client: CustomsClient,
+                     months_back: int = 12) -> dict:
     months = sorted(flash_series(store, "country", "00"))
     if len(months) < 8:
         return {"ok": False, "note": "국가 속보 데이터가 부족합니다. run_flash.py --kinds country 실행 필요."}
+    # 검증에 24개월을 다 쓸 이유가 없다. 12개월이면 상관·레벨 판정에 충분하고
+    # 호출 수와 응답 크기가 절반이 된다.
+    months = months[-months_back:]
     start, end = months[0].replace("-", ""), months[-1].replace("-", "")
 
     cands = [(s.slot, s.label, s.code) for s in cfg.country.body() if s.code]
     actual: dict[str, dict[str, float]] = {}
+    skipped = []
     for _, label, code in cands:
-        ser, mode = country_totals(client, code, start, end)
+        if client.out_of_budget():
+            skipped.append(label)
+            continue
+        try:
+            ser, mode = country_totals(client, code, start, end)
+        except Exception as exc:                  # noqa: BLE001
+            # 한 나라가 실패해도 검증 전체를 멈추지 않는다. EU 처럼 이 API 의
+            # 국가코드가 아닐 수도 있고, 일시적 네트워크 문제일 수도 있다.
+            print(f"  ✗ {label}({code}): {exc}")
+            skipped.append(label)
+            continue
         actual[code] = ser
-        print(f"  {label}({code}): {len(ser)}개월 수집 [{mode}]")
+        left = client.budget_left()
+        print(f"  {label}({code}): {len(ser)}개월 수집 [{mode}] {client.last_elapsed:.1f}s"
+              f"{'' if left is None else f' (남은 예산 {left:.0f}s)'}")
+    if skipped:
+        print(f"  … 건너뜀: {', '.join(skipped)}")
 
     results, ok_all = [], True
     for slot, label, code in cands:
@@ -177,10 +204,14 @@ def verify_countries(store: Store, cfg: F.FlashConfig, client: CustomsClient) ->
                         "bestMatch": best[1] if best else None,
                         "r": best[3] if best else None,
                         "ratioMedian": best[4] if best else None, "ok": ok})
-    return {"ok": ok_all, "slots": results,
+    if skipped:
+        ok_all = False
+    return {"ok": ok_all, "slots": results, "skipped": skipped,
             "note": ("선언 순서가 실측과 일치합니다." if ok_all else
-                     "선언 순서와 실측이 어긋납니다. config/flash.yaml 의 country.slots 를 "
-                     "bestMatch 에 맞춰 고친 뒤 다시 검증하세요.")}
+                     (f"{len(skipped)}개국을 확인하지 못했습니다({', '.join(skipped)}). "
+                      "국가 슬롯은 닫아 둡니다." if skipped else
+                      "선언 순서와 실측이 어긋납니다. config/flash.yaml 의 country.slots 를 "
+                      "bestMatch 에 맞춰 고친 뒤 다시 검증하세요."))}
 
 
 def main() -> int:
@@ -189,6 +220,12 @@ def main() -> int:
     ap.add_argument("--out", default="data/flash_verify.json")
     ap.add_argument("--items", action="store_true")
     ap.add_argument("--countries", action="store_true")
+    ap.add_argument("--months", type=int, default=12,
+                    help="국가 검증에 쓸 개월 수. 12면 상관·레벨 판정에 충분하다.")
+    ap.add_argument("--budget-seconds", type=float, default=300,
+                    help="국가 검증의 벽시계 예산. 넘기면 남은 나라를 건너뛰고 닫아 둔다. 0=무제한")
+    ap.add_argument("--retries", type=int, default=2)
+    ap.add_argument("--read-timeout", type=int, default=45)
     args = ap.parse_args()
     if not (args.items or args.countries):
         args.items = True
@@ -214,9 +251,12 @@ def main() -> int:
             rc = rc or (0 if r["ok"] else 1)
 
         if args.countries:
-            print("[국가 슬롯 검증] 품목별국가별 API 로 국가별 월계를 따로 받아 대조")
-            client = CustomsClient()
-            r = verify_countries(store, cfg, client)
+            print(f"[국가 슬롯 검증] 품목별국가별 API 로 국가별 월계를 따로 받아 대조"
+                  f" (최근 {args.months}개월 · 예산 {args.budget_seconds or '무제한'}s)")
+            client = CustomsClient(max_retries=max(1, args.retries),
+                                   timeout=(15, args.read_timeout))
+            client.set_budget(args.budget_seconds or None)
+            r = verify_countries(store, cfg, client, months_back=args.months)
             payload["country"] = r
             for s in r.get("slots", []):
                 mark = "일치" if s["ok"] else "불일치"

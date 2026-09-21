@@ -30,11 +30,17 @@ PROBES = {
     "sido":          {"strtYymm": "202506", "endYymm": "202506"},
     "sido_item":     {"strtYymm": "202506", "endYymm": "202506", "sidoCd": "42", "hsSgn": "330499"},
     "sigungu_item":  {"strtYymm": "202506", "endYymm": "202506", "HsSgn": "330499", "sidoCd": "42"},
+    # 속보 2종. 1개월만 찔러 본다 — 응답이 3행뿐이라 가장 싼 프로브다.
+    "flash_item":    {"strtYymm": "202506", "endYymm": "202506"},
+    "flash_country": {"strtYymm": "202506", "endYymm": "202506"},
 }
 
 # 연결 실패는 키 문제와 전혀 다르다. 짧게 재시도해서 일시적 끊김과 구분한다.
-NET_RETRIES = 3
-NET_WAIT = 15
+# ★ 여기는 진단 단계지 수집 단계가 아니다. 오래 붙들면 정작 수집할 시간을 먹는다.
+#   (실측: 이 단계가 길어져 잡 전체가 25분 한도를 넘겨 취소된 적이 있다)
+NET_RETRIES = 2
+NET_WAIT = 8
+PROBE_TIMEOUT = (10, 30)
 HOST_HINT = "apis.data.go.kr (27.101.236.63)"
 
 APPLY_URL = {
@@ -43,10 +49,25 @@ APPLY_URL = {
     "sido":         "https://www.data.go.kr/data/15101643/openapi.do",
     "sido_item":    "https://www.data.go.kr/data/15101641/openapi.do",
     "sigungu_item": "https://www.data.go.kr/data/15134343/openapi.do",
+    "flash_item":    "https://www.data.go.kr/tcs/dss/selectApiDataDetailView.do",
+    "flash_country": "https://www.data.go.kr/tcs/dss/selectApiDataDetailView.do",
 }
 
 
 def main() -> int:
+    import argparse
+    ap = argparse.ArgumentParser()
+    # 워크플로마다 필요한 API 가 다르다. 속보 워크플로가 시군구 API 때문에 멈출
+    # 이유가 없고, 그 반대도 마찬가지다. 점검 대상을 좁히면 이 단계도 짧아진다.
+    ap.add_argument("--only", default="",
+                    help="쉼표로 구분한 엔드포인트 이름. 생략하면 전부 점검")
+    args = ap.parse_args()
+    want = [x.strip() for x in args.only.split(",") if x.strip()]
+    probes = {k: v for k, v in PROBES.items() if not want or k in want}
+    if want and not probes:
+        print(f"알 수 없는 엔드포인트: {want} (가능: {list(PROBES)})")
+        return 1
+
     key = os.environ.get("DATA_GO_KR_SERVICE_KEY", "").strip()
     if not key:
         print("DATA_GO_KR_SERVICE_KEY 가 설정되지 않았습니다.")
@@ -61,15 +82,17 @@ def main() -> int:
     base = cfg["host"] + cfg["prefix"]
 
     ok, bad, net = [], [], []
-    for name, params in PROBES.items():
+    for name, params in probes.items():
         path = cfg["endpoints"][name]["path"]
         qs = urlencode(params, quote_via=quote)
         url = f"{base}{path}?serviceKey={key}&{qs}"
-        body = None
+        body, took = None, 0.0
         # 연결 자체가 안 되는 건 키 문제가 아니다. 짧게 3번까지 다시 시도한다.
         for attempt in range(1, NET_RETRIES + 1):
             try:
-                body = requests.get(url, timeout=(15, 60)).text
+                t0 = time.monotonic()
+                body = requests.get(url, timeout=PROBE_TIMEOUT).text
+                took = time.monotonic() - t0
                 break
             except requests.RequestException as exc:
                 last = exc
@@ -98,7 +121,7 @@ def main() -> int:
         else:
             cnt = body.split("<totalCount>")[1].split("</totalCount>")[0] if "<totalCount>" in body else "?"
             n_item = body.count("<item>")
-            print(f"  ✓ {name:<14} 정상 (totalCount={cnt}, item={n_item})")
+            print(f"  ✓ {name:<14} 정상 (totalCount={cnt}, item={n_item}, {took:.1f}s)")
             ok.append(name)
 
     print(f"\n정상 {len(ok)} / 키·권한 실패 {len(bad)} / 연결 불가 {len(net)}")
@@ -124,7 +147,7 @@ def main() -> int:
     if not ok:
         print("""
 전부 실패했습니다. 순서대로 확인하세요:
-  1. 활용신청 여부 — 마이페이지 > 오픈API > 개발계정 에서 위 5개 API가 '승인' 상태인지.
+  1. 활용신청 여부 — 마이페이지 > 오픈API > 개발계정 에서 위 API들이 '승인' 상태인지.
      API마다 개별 신청이 필요합니다(개발단계는 자동승인, 신청 즉시 승인).
   2. 발급 직후 전파 지연 — 신규 키는 게이트웨이 반영까지 1~2시간 걸립니다.
   3. 키 값 — 마이페이지의 '일반 인증키(Encoding)' 을 그대로 복사했는지.
