@@ -104,14 +104,18 @@ jobs:
       # 속보(10일 단위 잠정치)는 flash.yml 이 1·11·21일에 따로 돌지만, 월별 실행에서도
       # 한 번 맞춰 둔다. 구간당 1콜이라 비용이 없고, 확정치와 잠정치를 같은 커밋에
       # 담아 두면 둘의 괴리(정합성 점검)를 같은 시점 기준으로 볼 수 있다.
+      # ★ 월별 확정 파이프라인이 속보 문제로 죽으면 안 된다. 여기는 곁다리다.
+      #   continue-on-error + 단계 타임아웃으로 완전히 격리한다.
       - name: 수집 — 속보(10일 단위 잠정치)
+        timeout-minutes: 8
+        continue-on-error: true
         env:
           DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
         run: |
           START=$(python -c "
           from kortrade.collect import current_yymm, shift_yymm
           print(shift_yymm(current_yymm(), -24))")
-          python scripts/run_flash.py --start "$START"
+          python scripts/run_flash.py --start "$START" --budget-seconds 360
           set +e; python scripts/verify_flash.py --items; rc=$?; set -e
           [ "$rc" = "0" ] || echo "::warning::속보 슬롯 매핑 검증 불일치 — data/flash_verify.json 확인"
 
@@ -121,7 +125,7 @@ jobs:
           python scripts/build_watchlist.py
           python scripts/build_universe.py
           python scripts/build_chains.py
-          python scripts/build_flash.py
+          python scripts/build_flash.py || echo "속보 건너뜀 (수집 실패)"
 
       # DB 가 GitHub 파일 한도(100MB)에 가까워지면 조용히 push 가 깨진다. 미리 경고한다.
       - name: DB 크기 점검
