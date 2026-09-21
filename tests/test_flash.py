@@ -122,8 +122,23 @@ def test_bad_month_never_enters_and_never_crashes():
          한 번 들어간 행은 계속 따라다닌다)
       3. 빌드가 남은 불량 행을 만나도 죽지 않고 건너뛴다
     """
-    # 1) 수집 단계 — parse_period 가 막는다
-    assert F.parse_period("2026", "08") == "2026-08"
+    # 0) 사고의 정체 — priodMon 은 달(月)이 아니라 YYYYMM 이었다.
+    #    구버전은 "2026" + "-" + "202608" = '2026-202608' 을 만들었고,
+    #    그 문자열의 [5:7] 이 '20' 이라 monthrange(2026, 20) 에서 터졌다.
+    #    20월이 아니라 202608 의 앞 두 자리였던 것이다.
+    legacy = f"{int('2026'):04d}-{int('202608'):02d}"
+    assert legacy == "2026-202608" and legacy[5:7] == "20", legacy
+    assert F.parse_period("2026", "202608") == "2026-08", "YYYYMM 을 못 읽는다"
+
+    # 1) 수집 단계 — parse_period 가 형태를 가리지 않고 읽되, 불량은 막는다
+    for (y, m), want in (
+        (("2026", "08"), "2026-08"),            # (연, 월)
+        (("2026", "202608"), "2026-08"),        # ★ 실제 응답
+        (("202608", "08"), "2026-08"),          # 연 필드에 YYYYMM
+        (("2026", "2026.08"), "2026-08"),       # 점 구분
+        (("2026", "20260810"), "2026-08"),      # YYYYMMDD
+    ):
+        assert F.parse_period(y, m) == want, (y, m, F.parse_period(y, m))
     for y, m in (("2026", "20"), ("2026", "0"), ("2026", "13"), ("2026", None),
                  ("2026", "총계"), ("1999", "08")):
         assert F.parse_period(y, m) is None, (y, m)
@@ -156,7 +171,75 @@ def test_bad_month_never_enters_and_never_crashes():
     assert "purge_bad_flash" in build, "빌드가 DB 청소를 하지 않는다"
     assert "int(latest[:4])" not in build and "int(py[:4])" not in build, \
         "기간을 다시 맨손으로 파싱하고 있다 — split_period 를 쓸 것"
-    print("  ✓ 불량 period 방어 3겹 — 수집 차단 / DB 청소 / 빌드 스킵")
+
+    # 4) 0행으로 조용히 끝나지 않는다 + 실패하면 응답 원문이 로그에 남는다
+    run = (ROOT / "scripts" / "run_flash.py").read_text(encoding="utf-8")
+    assert "적재된 행이 0개입니다" in run, "0행일 때 조용히 성공으로 끝난다"
+    assert (ROOT / "scripts" / "inspect_flash.py").exists(), "응답 원문 진단 도구가 없다"
+    wf = (ROOT / ".github" / "workflows" / "flash.yml").read_text(encoding="utf-8")
+    assert "inspect_flash.py" in wf and "if: failure()" in wf, \
+        "수집 실패 시 응답 원문을 자동으로 찍지 않는다 — 또 왕복하게 된다"
+    insp = (ROOT / "scripts" / "inspect_flash.py").read_text(encoding="utf-8")
+    assert "print(url" not in insp and "{url}" not in insp, "진단 도구가 인증키를 출력한다"
+    print("  ✓ period 방어 4겹 — YYYYMM 해석 / 수집 차단 / DB 청소 / 빌드 스킵 + 자동 진단")
+
+
+def test_collector_handles_real_response_shape():
+    """실제 응답 모양(priodMon = YYYYMM)을 수집기 전체에 통과시켜 본다.
+
+    파서 단위 테스트만으로는 부족하다. 사고는 parse_response → 레코드 생성 →
+    upsert 까지 이어지는 경로에서 났으므로, 그 경로를 그대로 태운다.
+    """
+    from kortrade.client import parse_response
+    from kortrade.collect import Collector
+
+    def item(ym, dt, total, semi):
+        return (f"<item><priodYear>{ym[:4]}</priodYear><priodMon>{ym}</priodMon>"
+                f"<priodDt>{dt}</priodDt>"
+                f"<itemUsdAmt00> {total}</itemUsdAmt00>"
+                f"<itemUsdAmt01> {semi}</itemUsdAmt01>"
+                f"<itemUsdAmt08> 6,410,000</itemUsdAmt08></item>")
+
+    xml = ("<response><header><resultCode>00</resultCode></header><body><items>"
+           + item("202608", "01~10", "21,263,370", "10,100,000")
+           + item("202608", "01~20", "45,000,000", "21,500,000")
+           + item("202608", "01~31", "98,280,000", "46,830,000")
+           + "</items></body></response>")
+
+    fields = yaml_item_fields("flash_item")
+    rows = parse_response(xml, fields)
+    assert len(rows) == 3, rows
+    assert rows[0]["month"] == "202608", "픽스처가 실제 모양을 반영하지 못한다"
+
+    class Stub:
+        max_months_per_call = 12
+        last_elapsed = 0.0
+        calls_made = 0
+        def out_of_budget(self): return False
+        def budget_left(self): return None
+        def call(self, *a, **k): return rows
+
+    db = Path(tempfile.mkdtemp()) / "t.sqlite"
+    with Store(db) as s:
+        col = Collector(client=Stub(), store=s)
+        col._fetch = lambda ep, params, force: rows      # 네트워크 대신 픽스처
+        st = col.collect_flash(("item",), "202608", "202608")
+        assert st["inserted"] == 9, st          # 3순 x 3슬롯
+        got = {(r["period"], r["seq"], r["slot"]): r["exp_usd"] for r in
+               s.conn.execute("SELECT period, seq, slot, exp_usd FROM flash_trade")}
+    assert set(p for p, _, _ in got) == {"2026-08"}, sorted(set(got))
+    # 단위: 천달러 → 달러
+    assert got[("2026-08", 1, "00")] == 21_263_370_000
+    assert got[("2026-08", 3, "01")] == 46_830_000_000
+    # 누계에서 구간을 뽑을 수 있어야 한다
+    assert got[("2026-08", 2, "00")] - got[("2026-08", 1, "00")] == 23_736_630_000
+    print("  ✓ 실제 응답 모양 통과 — priodMon=YYYYMM, 3순 x 3슬롯, 천달러→달러")
+
+
+def yaml_item_fields(name: str) -> dict:
+    import yaml
+    cfg = yaml.safe_load((ROOT / "config" / "api.yaml").read_text(encoding="utf-8"))
+    return cfg["endpoints"][name]["item_fields"]
 
 
 def test_landing_adds_information():
