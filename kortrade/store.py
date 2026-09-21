@@ -53,6 +53,25 @@ CREATE TABLE IF NOT EXISTS universe_trade (
 CREATE INDEX IF NOT EXISTS ix_uni_hs4 ON universe_trade (hs4, period);
 CREATE INDEX IF NOT EXISTS ix_uni_hs2 ON universe_trade (hs2, period);
 
+-- 속보(旬 단위 잠정치). 관세청은 한 달을 네 번 발표하는데 앞의 세 번이 여기 담긴다.
+--   seq 1 = 1~10일 누계 · 2 = 1~20일 누계 · 3 = 월전체(잠정)
+-- ★ 값은 **1일부터의 누계**다. 구간값이 아니다. 11~20일은 seq2 − seq1 로 만든다.
+-- ★ 원본 단위는 천 달러지만 여기에는 **달러로 환산해** 넣는다(다른 표와 축을 맞춘다).
+-- ★ slot 은 API 필드 itemUsdAmt00~10 의 번호. 품목명이 응답에 없어서 번호로만 온다.
+--   번호↔품목 대응은 config/flash.yaml 이 근거와 함께 들고 있고 테스트가 고정한다.
+CREATE TABLE IF NOT EXISTS flash_trade (
+    period     TEXT NOT NULL,           -- 'YYYY-MM'
+    seq        INTEGER NOT NULL,        -- 1 | 2 | 3
+    kind       TEXT NOT NULL,           -- 'item' | 'country'
+    slot       TEXT NOT NULL,           -- '00'..'10'  ('00' = 전체)
+    dt         TEXT,                    -- 응답 원문 '01~10' / '01~31'
+    day_to     INTEGER,                 -- 10 / 20 / 28~31
+    exp_usd    INTEGER,                 -- **달러** (원본 천달러 x 1000)
+    fetched_at TEXT NOT NULL,
+    UNIQUE (period, seq, kind, slot)
+);
+CREATE INDEX IF NOT EXISTS ix_flash_slot ON flash_trade (kind, slot, seq, period);
+
 CREATE TABLE IF NOT EXISTS region_trade (
     period       TEXT NOT NULL,
     hs_code      TEXT NOT NULL,          -- HS 6단위
@@ -120,7 +139,11 @@ REGION_KEY = ["period", "hs_code", "sido_cd", "sigungu_name"]
 UNIVERSE_COLS = ["period", "hs4", "hs2", "top_name", "exp_usd", "exp_wgt", "imp_usd"]
 UNIVERSE_KEY = ["period", "hs4"]
 
-_NUMERIC = {"exp_usd", "exp_wgt", "imp_usd", "imp_wgt", "bal_usd", "exp_cnt", "imp_cnt"}
+FLASH_COLS = ["period", "seq", "kind", "slot", "dt", "day_to", "exp_usd"]
+FLASH_KEY = ["period", "seq", "kind", "slot"]
+
+_NUMERIC = {"exp_usd", "exp_wgt", "imp_usd", "imp_wgt", "bal_usd", "exp_cnt", "imp_cnt",
+            "seq", "day_to"}
 
 
 def _now() -> str:
@@ -218,6 +241,11 @@ class Store:
 
     def upsert_universe(self, rows: Iterable[dict]) -> dict[str, int]:
         return self._upsert("universe_trade", UNIVERSE_COLS, UNIVERSE_KEY, rows)
+
+    def upsert_flash(self, rows: Iterable[dict]) -> dict[str, int]:
+        """속보. 잠정치는 다음 순(旬) 발표 때 소급 조정되는 일이 잦으므로
+        revisions 에 남는 변경이 많아도 정상이다 — 오히려 그게 정보다."""
+        return self._upsert("flash_trade", FLASH_COLS, FLASH_KEY, rows)
 
     # ------------------------------------------------------------ 시도코드
 

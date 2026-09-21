@@ -21,6 +21,7 @@ import yaml
 from .client import (CustomsClient, CustomsAPIError, chunk_periods, hs6, month_range,
                      normalize_period, split_sigungu)
 from .codes import sido_code_for
+from .flash import UNIT_USD as FLASH_UNIT_USD, parse_dt
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -60,6 +61,12 @@ def latest_available_yymm(today: date | None = None) -> str:
         m += 12
         y -= 1
     return f"{y:04d}{m:02d}"
+
+
+def current_yymm(today: date | None = None) -> str:
+    """속보는 **이번 달**까지 나온다. 월별 확정치와 달리 공표 래그를 빼면 안 된다."""
+    d = today or date.today()
+    return f"{d.year:04d}{d.month:02d}"
 
 
 def shift_yymm(yymm: str, months: int) -> str:
@@ -230,6 +237,48 @@ class Collector:
                 for k in totals:
                     totals[k] += st[k]
             log.info("기업 레이어 %s/%s 완료 (누적 %s)", sido_name, hs, totals)
+        return totals
+
+    # ------------------------------------------------------------ 속보 레이어
+
+    def collect_flash(self, kinds: tuple[str, ...], start: str, end: str) -> dict[str, int]:
+        """10일 단위 잠정치. 품목/국가 각각 12개월씩 한 번에 받는다.
+
+        캐시(fetch_log)를 쓰지 않고 **매번 다시 받는다.** 이유가 두 가지다.
+          - 같은 달의 행이 순(旬)마다 늘어난다. 01~10 만 있던 달에 01~20 이 붙는다.
+          - 잠정치는 다음 발표 때 소급 조정된다. 캐시하면 그 조정을 영영 못 본다.
+        구간당 1콜, 2년이면 종류별 2콜이라 전부 다시 받아도 부담이 없다.
+        """
+        totals = {"inserted": 0, "updated": 0, "unchanged": 0}
+        for kind in kinds:
+            endpoint = f"flash_{kind}"
+            for s, e in chunk_periods(start, end, self.client.max_months_per_call):
+                rows = self._fetch(endpoint, {"strtYymm": s, "endYymm": e}, force=True)
+                recs = []
+                for r in rows:
+                    try:
+                        period = f"{int(r.get('year')):04d}-{int(r.get('month')):02d}"
+                    except (TypeError, ValueError):
+                        continue
+                    day_to, seq = parse_dt(r.get("dt", ""))
+                    if not seq:
+                        continue
+                    for i in range(11):
+                        raw = r.get(f"v{i:02d}")
+                        usd = _scale(raw, FLASH_UNIT_USD)
+                        # 아직 발표되지 않은 순은 빈 값/0 으로 온다. 0 을 넣으면
+                        # 전년 대비 계산에서 '-100%'라는 가짜 신호가 만들어진다.
+                        if usd is None or int(usd) <= 0:
+                            continue
+                        recs.append({
+                            "period": period, "seq": seq, "kind": kind,
+                            "slot": f"{i:02d}", "dt": (r.get("dt") or "").strip(),
+                            "day_to": day_to, "exp_usd": usd,
+                        })
+                st = self.store.upsert_flash(recs)
+                for k in totals:
+                    totals[k] += st[k]
+                log.info("속보 %s %s~%s: %d행 → %s", kind, s, e, len(recs), st)
         return totals
 
     def collect_for_companies(self, companies: dict, start: str, end: str) -> dict[str, int]:
