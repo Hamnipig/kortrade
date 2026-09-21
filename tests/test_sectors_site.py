@@ -353,7 +353,11 @@ def test_universe_layer():
 
     html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
     assert "data/universe.json" in html and "renderUniverse" in html
-    assert 'scanPane = "uni"' in html, "기본 화면이 전체 유니버스가 아니다"
+    # 기본 화면은 가장 최신인 속보. 속보가 없으면 전체 유니버스로 떨어져야 한다
+    # ("먼저 전산업을 보고 특정 산업으로" — 워치리스트로 먼저 떨어지면 안 된다).
+    assert 'let scanPane = "flash"' in html, "기본 화면이 속보가 아니다"
+    assert 'if (!FLASH) scanPane = UNI ? "uni"' in html, \
+        "속보가 없을 때 전체 유니버스로 떨어지지 않는다"
     wf = (ROOT / ".github" / "workflows" / "update.yml").read_text(encoding="utf-8")
     assert "run_universe.py" in wf and "build_universe.py" in wf, "자동 갱신에 유니버스가 빠졌다"
     assert "DB 크기 점검" in wf, "100MB 한도 경고가 없다"
