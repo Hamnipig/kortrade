@@ -284,6 +284,14 @@ class Collector:
                             "slot": f"{i:02d}", "dt": (r.get("dt") or "").strip(),
                             "day_to": day_to, "exp_usd": usd,
                         })
+                if rows:
+                    # 기간을 어떻게 읽었는지 매번 한 줄 남긴다. 이 API 는 문서가
+                    # 부실해서, 원문과 해석을 나란히 봐야 매핑이 틀린 걸 알아챈다.
+                    r0 = rows[0]
+                    log.info("속보 %s 기간 해석 — 원문 year=%r month=%r dt=%r → %s seq=%s",
+                             kind, r0.get("year"), r0.get("month"), r0.get("dt"),
+                             parse_period(r0.get("year"), r0.get("month")),
+                             parse_dt(r0.get("dt", ""))[1])
                 st = self.store.upsert_flash(recs)
                 for k in totals:
                     totals[k] += st[k]

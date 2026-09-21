@@ -90,8 +90,29 @@ def shift(period: str, months: int) -> str:
 #     (1) **달력에 없는 달은 애초에 저장하지 않는다.** 걸러내는 자리는 수집기다.
 #     (2) 화면 빌드는 이상한 행 하나 때문에 통째로 죽으면 안 된다. 건너뛰고 알린다.
 
+def _ym(value) -> str | None:
+    """'202608' / '2026.08' / '20260810' 처럼 **한 칸에 연월이 다 든** 값을 푼다."""
+    d = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if len(d) not in (6, 8):
+        return None
+    y, m = int(d[:4]), int(d[4:6])
+    return f"{y:04d}-{m:02d}" if (2000 <= y <= 2100 and 1 <= m <= 12) else None
+
+
 def parse_period(year, month) -> str | None:
-    """('2026','08') -> '2026-08'. 달력에 없는 값이면 None."""
+    """('2026','08') -> '2026-08'. 달력에 없는 값이면 None.
+
+    ★ 실측(2026-09-21) — 이 API 의 priodMon 은 달(月)이 아니라 **YYYYMM** 이다.
+      순진하게 f"{year}-{month:02d}" 로 붙이면 '2026-202608' 이 되고,
+      그 문자열의 5~7번째 글자가 '20' 이라 monthrange(2026, 20) 에서 터진다.
+      ('bad month number 20' 의 정체가 이것이다 — 20월이 아니라 202608 의 앞 두 자리)
+      그래서 **한 칸에 연월이 다 든 형태를 먼저** 본다. 어느 쪽 필드에 들어 있든
+      6자리(YYYYMM)면 그걸로 읽고, 아니면 (연, 월) 쌍으로 읽는다.
+    """
+    for v in (month, year):
+        got = _ym(v)
+        if got:
+            return got
     try:
         y, m = int(str(year).strip()), int(str(month).strip())
     except (TypeError, ValueError):
