@@ -1,0 +1,128 @@
+name: Update flash (10-day)
+
+# 관세청은 한 달 수출을 네 번 발표한다.
+#   01~10일 누계 → 11일경 · 01~20일 누계 → 21일경 · 월전체 잠정 → 익월 1일경
+#   월별 확정치 → 익월 15일경   (이건 update.yml 이 17일에 받는다)
+# 이 워크플로는 앞의 셋을 받는다. 월전체 잠정만으로도 확정치보다 15일 빠르다.
+#
+# 하루에 두 번 도는 이유: 공표 시각이 일정치 않아서다. 수집은 UPSERT 라
+# 같은 자료를 다시 받아도 아무 일도 일어나지 않고, 호출도 4콜뿐이다.
+on:
+  schedule:
+    - cron: "0 3 1,11,21 * *"    # 12:00 KST
+    - cron: "0 9 1,11,21 * *"    # 18:00 KST (오전 공표가 늦어지는 경우 대비)
+  workflow_dispatch:
+    inputs:
+      months:
+        description: "수집할 과거 개월 수 (전년 동기 비교에 최소 24)"
+        default: "24"
+      verify_countries:
+        description: "국가 슬롯 번호↔국가 대응 검증 (약 20콜)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+# ★ update.yml 과 **같은 그룹**을 쓴다. 두 워크플로가 같은 DB 파일을 쓰고
+#   같은 브랜치에 push 하므로, 동시에 돌면 커밋이 충돌한다.
+concurrency:
+  group: trade-update
+  cancel-in-progress: false
+
+jobs:
+  flash:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: 인증키 확인
+        env:
+          DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
+        run: |
+          if [ -z "$DATA_GO_KR_SERVICE_KEY" ]; then
+            echo "::error::DATA_GO_KR_SERVICE_KEY 시크릿이 없습니다."
+            exit 1
+          fi
+          set +e; python scripts/check_key.py; rc=$?; set -e
+          # 종료코드 2 = 관세청 서버 연결 실패 (키 문제 아님). 해외 러너에서 간헐적이다.
+          if [ "$rc" = "2" ]; then
+            echo "::warning::관세청 API 에 연결되지 않습니다(키 문제 아님). 다음 예약 실행에서 다시 시도합니다."
+            exit 1
+          fi
+          exit $rc
+
+      - name: 수집 — 10일 단위 잠정치
+        env:
+          DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
+          MONTHS: ${{ inputs.months || '24' }}
+        run: |
+          START=$(python -c "
+          from kortrade.collect import current_yymm, shift_yymm
+          import os; print(shift_yymm(current_yymm(), -int(os.environ['MONTHS'])))")
+          echo "수집 시작월: $START"
+          python scripts/run_flash.py --start "$START"
+
+      # 슬롯 번호 ↔ 품목/국가 대응 검증. 여기서 실패해도 빌드를 죽이지 않는다 —
+      # 틀린 매핑으로 화면을 그리는 것보다, 경고를 띄우고 국가 슬롯을 닫아 두는 쪽이 낫다.
+      - name: 슬롯 매핑 검증
+        env:
+          DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
+        run: |
+          EXTRA=""
+          if [ "${{ inputs.verify_countries }}" != "false" ]; then EXTRA="--countries"; fi
+          set +e
+          python scripts/verify_flash.py --items $EXTRA
+          rc=$?
+          set -e
+          if [ "$rc" != "0" ]; then
+            echo "::warning::슬롯 매핑 검증에서 불일치가 나왔습니다. data/flash_verify.json 을 확인하세요. 국가 슬롯은 화면에 표시되지 않습니다."
+          fi
+
+      - name: 사이트 데이터 생성
+        run: |
+          python scripts/build_flash.py
+          # 나머지 레이어는 API 호출 없이 DB 만 다시 읽는다. 아직 수집 전이면 건너뛴다.
+          python scripts/build_site.py      || echo "섹터 레이어 건너뜀"
+          python scripts/build_watchlist.py || echo "워치리스트 건너뜀"
+          python scripts/build_universe.py  || echo "유니버스 건너뜀"
+          python scripts/build_chains.py    || echo "밸류체인 건너뜀"
+
+      - name: 변경분 커밋
+        if: always()
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A data site/data 2>/dev/null || git add -A data || true
+          if git diff --staged --quiet; then
+            echo "변경 없음 — 커밋 건너뜀"
+          else
+            git commit -m "flash: $(date -u +%Y-%m-%d) 10일 단위 잠정치 갱신"
+            # 월별 워크플로와 같은 브랜치를 쓴다. 뒤처진 상태면 rebase 후 밀어넣는다.
+            git pull --rebase --autostash || true
+            git push
+          fi
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: flash
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
