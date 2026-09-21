@@ -102,6 +102,9 @@ def main() -> int:
         return 2
 
     with Store(args.db) as store:
+        bad = store.purge_bad_flash()
+        if bad:
+            print(f"  ⚠ 달력에 없는 period 행 {len(bad)}종 삭제: {bad}")
         col = Collector(client=client, store=store,
                         flash_window_months=args.window_months)
         client.set_budget(args.budget_seconds or None)

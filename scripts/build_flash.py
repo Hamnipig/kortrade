@@ -56,11 +56,18 @@ def build(store: Store, cfg: F.FlashConfig) -> dict | None:
     if "item" not in kinds:
         return None
 
-    months = sorted({r["period"] for r in rows if r["kind"] == "item"})
+    # 달력에 없는 달이 섞여 있으면 여기서 떨어낸다. purge_bad_flash 가 DB 에서
+    # 이미 지웠지만, 빌드도 한 번 더 막는다 — 행 하나 때문에 화면 전체가 죽는
+    # 구조를 다시 만들지 않는다.
+    months = sorted({r["period"] for r in rows if r["kind"] == "item"
+                     and F.split_period(r["period"])})
+    if not months:
+        return None
     latest = months[-1]
     # 최신월에서 실제로 들어온 가장 늦은 순. 월초에는 1, 월말 직후에는 3이 된다.
     seq = max(r["seq"] for r in rows if r["kind"] == "item" and r["period"] == latest)
     py = F.shift(latest, -12)
+    ym_now, ym_py = F.split_period(latest), F.split_period(py)
 
     def get(kind, slot, period, s):
         return val.get((kind, slot, period, s))
@@ -68,9 +75,10 @@ def build(store: Store, cfg: F.FlashConfig) -> dict | None:
     def wd(period, kind, slot, s):
         """해당 (월, 순)의 평일수. day_to 는 응답 원문에서 가져온다 — 2월은 28/29다."""
         dd = dayto.get((kind, slot, period, s)) or dayto.get((kind, "00", period, s)) or 0
-        if not dd:
+        ym = F.split_period(period)
+        if not dd or not ym:
             return None
-        return F.weekdays(int(period[:4]), int(period[5:7]), dd) or None
+        return F.weekdays(ym[0], ym[1], dd) or None
 
     def block(kind: str, slot: str) -> dict:
         now = get(kind, slot, latest, seq)
@@ -85,8 +93,8 @@ def build(store: Store, cfg: F.FlashConfig) -> dict | None:
 
         sh_now, sh_prev = F.share(now, tot_now), F.share(prev, tot_prev)
         # 월 전체 평일수 — 잔여 기간을 채울 때 쓴다
-        wf_now = F.weekdays(int(latest[:4]), int(latest[5:7]), 31)
-        wf_prev = F.weekdays(int(py[:4]), int(py[5:7]), 31)
+        wf_now = F.weekdays(*ym_now, 31)
+        wf_prev = F.weekdays(*ym_py, 31)
         est = F.landing_wd(now, prev, full_prev, w_now, w_prev, wf_now, wf_prev,
                            cfg.min_base_usd)
 
@@ -228,6 +236,10 @@ def main() -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     with Store(args.db) as store:
+        bad = store.purge_bad_flash()
+        if bad:
+            print(f"⚠ 달력에 없는 period 행을 {len(bad)}종 삭제했습니다: {bad}")
+            print("  (수집기가 이제 막지만, 이미 커밋된 DB 에 남아 있던 행입니다)")
         payload = build(store, cfg)
     if not payload:
         print("속보 데이터가 없습니다. scripts/run_flash.py 를 먼저 실행하세요.")
@@ -238,6 +250,12 @@ def main() -> int:
 
     a = payload["asOf"]
     t = payload["total"]
+    # 데이터의 '모양'을 한눈에. 이 API 는 문서가 부실해서, 월수와 순(旬) 분포가
+    # 예상과 다르면(월당 3행이 아니면) 그 자체가 응답 구조를 의심할 근거다.
+    print(f"수집 상태 — {len(payload['months'])}개월 "
+          f"({payload['months'][0]}~{payload['months'][-1]}), "
+          f"품목 슬롯 {len(payload['items'])}개, "
+          f"국가 {'수집됨' if payload['countryCollected'] else '없음'}")
     print(f"flash.json — {a['period']} {a['label']} "
           f"(확정치 대비 {payload['leadDays']}일 선행)")
     print(f"  전체 ${t['usd']}M · 누계YoY {t['yoy']}% · 착지추정 ${t['est']}M "
@@ -254,6 +272,13 @@ def main() -> int:
         mark = "OK" if rec["ok"] else "★괴리"
         print(f"  정합성 {rec['period']}: 잠정 ${rec['flash']}M vs 확정 ${rec['confirmed']}M "
               f"= {rec['gapPct']:+.2f}% [{mark}]")
+        if not rec["ok"]:
+            # Actions 로그에 경고로 뜬다. 잠정↔확정 차이는 정상이지만 허용치를
+            # 넘으면 슬롯 매핑이나 단위를 의심해야 한다 — 조용히 지나가면 안 된다.
+            print(f"::warning::속보 잠정치가 확정 통계와 {rec['gapPct']:+.2f}% 어긋납니다"
+                  f" (허용 ±{rec['tol']}%). 슬롯 매핑 또는 단위를 확인하세요.")
+    else:
+        print("  정합성: 확정 통계(universe_trade)가 아직 없어 대조하지 못했습니다.")
     if not payload["countryVerified"]:
         print("  국가 슬롯: 미검증 — 화면에 내보내지 않습니다 "
               "(scripts/verify_flash.py --countries 로 검증)")
