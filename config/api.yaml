@@ -109,6 +109,66 @@ endpoints:
       impUsdAmt:   imp_usd
       cmtrBlncAmt: bal_usd
 
+  # ------------------------------------------------------------------ 속보 레이어
+  # [속보] 10일 단위 잠정치 — 품목별 (상위 10대 품목)
+  # 월 단위 확정치가 15일경 나오는 데 비해, 이쪽은 **순(旬) 단위**로 나온다.
+  #   01~10 → 11일경 · 01~20 → 21일경 · 01~말 → 익월 1일경
+  # 즉 월전체 잠정치(01~말)가 확정치보다 **약 2주 빠르다**. 이것이 속보 레이어의 존재 이유다.
+  #
+  # ★ 함정 3개 (실측 확인 2026-09)
+  #   1. 값은 **1일부터의 누계**다. 11~20일 구간은 (01~20) − (01~10) 으로 직접 빼야 한다.
+  #   2. 단위는 **천 달러**. 품목별 API(달러)와 다르다 → 수집 시 1000배해 달러로 저장한다.
+  #   3. 필드명이 itemUsdAmt00~10 으로 **번호만 있고 품목명이 없다**. 품목별/국가별 두 API 가
+  #      응답 구조가 완전히 같아서, 어느 쪽 번호인지 필드만 봐서는 구분이 안 된다.
+  #      번호↔품목 대응은 config/flash.yaml 에 근거와 함께 못박아 두고 테스트로 고정한다.
+  flash_item:
+    path: /prlstMmUtPrviExpAcrs/getPrlstMmUtPrviExpAcrs
+    doc: https://www.data.go.kr/tcs/dss/selectApiDataDetailView.do
+    params:
+      serviceKey: {required: true}
+      strtYymm:   {required: true, desc: "시작년월 YYYYMM"}
+      endYymm:    {required: true, desc: "종료년월 YYYYMM"}
+    item_fields:
+      priodYear:    year
+      priodMon:     month
+      priodDt:      dt            # "01~10" / "01~20" / "01~31"
+      itemUsdAmt00: v00           # 전체 수출금액
+      itemUsdAmt01: v01
+      itemUsdAmt02: v02
+      itemUsdAmt03: v03
+      itemUsdAmt04: v04
+      itemUsdAmt05: v05
+      itemUsdAmt06: v06
+      itemUsdAmt07: v07
+      itemUsdAmt08: v08
+      itemUsdAmt09: v09
+      itemUsdAmt10: v10
+
+  # [속보] 10일 단위 잠정치 — 국가별 (상위 10대 교역국)
+  # 응답 구조가 flash_item 과 **완전히 동일**하다. 필드명도 itemUsdAmt00~10 그대로다.
+  flash_country:
+    path: /cntyMmUtPrviExpAcrs/getCntyMmUtPrviExpAcrs
+    doc: https://www.data.go.kr/tcs/dss/selectApiDataDetailView.do
+    params:
+      serviceKey: {required: true}
+      strtYymm:   {required: true}
+      endYymm:    {required: true}
+    item_fields:
+      priodYear:    year
+      priodMon:     month
+      priodDt:      dt
+      itemUsdAmt00: v00
+      itemUsdAmt01: v01
+      itemUsdAmt02: v02
+      itemUsdAmt03: v03
+      itemUsdAmt04: v04
+      itemUsdAmt05: v05
+      itemUsdAmt06: v06
+      itemUsdAmt07: v07
+      itemUsdAmt08: v08
+      itemUsdAmt09: v09
+      itemUsdAmt10: v10
+
   # [코드 탐색용] 시도별 수출입실적 (sidoCd 옵션)
   # data.go.kr/data/15101643 — 시도코드 자동 탐색에 사용
   sido:
