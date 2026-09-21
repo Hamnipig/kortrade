@@ -121,6 +121,13 @@ def main() -> int:
             " FROM flash_trade").fetchone()
         print(f"  flash_trade: {row['n']}행 · {row['a']}~{row['b']}"
               f" · 최신월 최종 순 {F.SEQ_LABEL.get(row['s'], '–')}")
+        if not row["n"]:
+            # 조용히 0행으로 끝나면 다음 단계가 '데이터 없음'으로 죽는다.
+            # 여기서 멈추고 무엇을 봐야 하는지 알려준다.
+            print("\n  ✗ 적재된 행이 0개입니다. 응답의 필드 구조가 설정과 다릅니다.")
+            print("    위 '버린 행 원문' 로그를 보거나, 다음을 실행해 응답 원문을 확인하세요:")
+            print("      python scripts/inspect_flash.py")
+            return 1
     return 0
 
 
