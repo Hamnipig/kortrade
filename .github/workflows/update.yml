@@ -101,12 +101,27 @@ jobs:
           if [ "${{ inputs.full_refresh }}" = "true" ]; then EXTRA="--revision-window 999"; fi
           python scripts/run_universe.py --start "$START" $EXTRA
 
+      # 속보(10일 단위 잠정치)는 flash.yml 이 1·11·21일에 따로 돌지만, 월별 실행에서도
+      # 한 번 맞춰 둔다. 구간당 1콜이라 비용이 없고, 확정치와 잠정치를 같은 커밋에
+      # 담아 두면 둘의 괴리(정합성 점검)를 같은 시점 기준으로 볼 수 있다.
+      - name: 수집 — 속보(10일 단위 잠정치)
+        env:
+          DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
+        run: |
+          START=$(python -c "
+          from kortrade.collect import current_yymm, shift_yymm
+          print(shift_yymm(current_yymm(), -24))")
+          python scripts/run_flash.py --start "$START"
+          set +e; python scripts/verify_flash.py --items; rc=$?; set -e
+          [ "$rc" = "0" ] || echo "::warning::속보 슬롯 매핑 검증 불일치 — data/flash_verify.json 확인"
+
       - name: 사이트 데이터 생성
         run: |
           python scripts/build_site.py
           python scripts/build_watchlist.py
           python scripts/build_universe.py
           python scripts/build_chains.py
+          python scripts/build_flash.py
 
       # DB 가 GitHub 파일 한도(100MB)에 가까워지면 조용히 push 가 깨진다. 미리 경고한다.
       - name: DB 크기 점검
@@ -133,6 +148,8 @@ jobs:
             echo "변경 없음 — 커밋 건너뜀"
           else
             git commit -m "data: $(date -u +%Y-%m-%d) 관세청 수출입 갱신"
+            # flash.yml 과 같은 브랜치를 쓴다. 뒤처진 상태면 rebase 후 밀어넣는다.
+            git pull --rebase --autostash || true
             git push
           fi
 
