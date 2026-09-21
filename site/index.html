@@ -76,6 +76,10 @@ h1{font-size:clamp(21px,3.4vw,29px);line-height:1.15;margin:0;font-weight:700;
 .panel{background:var(--surface);border:1px solid var(--rule);border-radius:3px;
   padding:16px 16px 14px;min-width:0;display:flex;flex-direction:column}
 .p7{grid-column:span 7}.p5{grid-column:span 5}.p12{grid-column:span 12}
+.p6{grid-column:span 6}
+/* 속보 표에서 조업일수에 중립인 유일한 열. 여기를 눈에 먼저 들어오게 한다. */
+.wt th.hicol,.wt td.hicol{background:var(--surface-2)}
+.wt th.hicol{color:var(--ink-2);font-weight:600}
 @media(max-width:860px){.p7,.p5{grid-column:span 12}}
 .ptitle{font-size:14.5px;font-weight:600;margin:0;letter-spacing:-.01em}
 .pnote{font-size:11.5px;color:var(--ink-3);margin:4px 0 12px;line-height:1.5}
@@ -221,7 +225,8 @@ tbody tr.newcat td{border-top:1px solid var(--rule)}
       <p class="eyebrow">관세청 시군구별 품목별 수출입실적</p>
       <h1>수출 섹터 로테이션</h1>
       <p class="sub">통관 데이터를 시군구 단위로 전수 수집해, 어느 카테고리가 비중을 가져가고
-        어느 지역이 그 변화를 끌고 있는지 추적합니다. 매월 관세청 공표 직후 자동 갱신됩니다.</p>
+        어느 지역이 그 변화를 끌고 있는지 추적합니다. 월별 확정치는 매월 17일,
+        <b>10일 단위 속보는 1·11·21일</b>에 자동 갱신됩니다.</p>
     </div>
     <div class="meta" id="meta"></div>
   </header>
@@ -674,6 +679,175 @@ function renderUniverse(){
   drawUniTable();
 }
 
+/* ================= 속보 (10일 단위 잠정치) =================
+   이 화면의 핵심은 '어떤 숫자를 크게 보여주는가'다.
+   누계 YoY 를 헤드라인으로 두면 조업일수 잡음이 그대로 투자 판단에 들어간다.
+   그래서 기본 정렬과 강조는 **점유율 변화(%p)** — 같은 순(旬) 안에서는 모든
+   품목이 같은 날짜를 공유하므로 이 축만은 조업일수에 완전히 중립이다.       */
+let FLASH = null, flSort = "shareChgPp", flDir = -1;
+
+const FCOLS = [
+  {k:"label",      t:"품목", l:1},
+  {k:"shareChgPp", t:"점유율 Δ%p", hi:1},
+  {k:"share",      t:"점유율 %"},
+  {k:"wdYoy",      t:"평일 일평균 YoY"},
+  {k:"yoy",        t:"누계 YoY"},
+  {k:"usd",        t:"누계 $M"},
+  {k:"est",        t:"월 착지추정 $M"},
+  {k:"estYoy",     t:"착지 YoY"},
+];
+
+function drawFlashTable(){
+  const rows = FLASH.items.slice().sort((a,b)=>{
+    const x=a[flSort], y=b[flSort];
+    if (typeof x === "string" || typeof y === "string")
+      return String(x).localeCompare(String(y)) * (flDir<0?-1:1);
+    const xv = x==null ? (flDir<0?-Infinity:Infinity) : +x;
+    const yv = y==null ? (flDir<0?-Infinity:Infinity) : +y;
+    return (xv-yv)*(flDir<0?-1:1);
+  });
+  const nd = n => n==null ? "–" : pct(n);
+  const arrow = k => flSort===k ? (flDir<0?" ▾":" ▴") : "";
+  const th = c => `<th class="${c.l?'l':''} sortable${flSort===c.k?' sorted':''}${c.hi?' hicol':''}"
+    data-col="${c.k}" role="button" tabindex="0">${c.t}${arrow(c.k)}</th>`;
+  document.getElementById("fltbl").innerHTML = `
+    <table class="wt"><thead><tr>${FCOLS.map(th).join("")}
+      <th class="l">월전체(잠정) 추이</th></tr></thead><tbody>` +
+    rows.map(r=>{
+      const sp = (r.series||[]).filter(x=>x!=null);
+      const segs = Object.entries(r.segs||{}).filter(([,v])=>v!=null)
+        .map(([k,v])=>`${k} $${fm(v)}M`).join(" · ");
+      return `<tr class="itemrow">
+      <td class="l"><span class="it">${esc(r.label)}</span>
+        ${r.lumpy?'<span class="pu warn" title="인도(引渡) 단위로 한 번에 계상됩니다. 월 단위 변동이 원래 크므로 추세만 보세요.">건별</span>':''}
+        ${r.watch&&r.watch.length?'<span class="pu high" title="워치리스트 10단위 품목과 연결됩니다">워치</span>':''}
+        <span class="tk">${esc((r.tickers||[]).join(" · ")||r.hs||"")}</span></td>
+      <td class="hicol">${r.shareChgPp==null?"–":
+        `<span class="chip ${r.shareChgPp>0?'up':'down'}">${r.shareChgPp>0?"+":""}${r.shareChgPp}%p</span>`}</td>
+      <td>${r.share==null?"–":r.share+"%"}</td>
+      <td class="${r.wdYoy>0?'up':'down'}">${nd(r.wdYoy)}</td>
+      <td class="${r.yoy>0?'up':'down'}">${nd(r.yoy)}</td>
+      <td>${fm(r.usd)}</td>
+      <td>${r.est==null?"–":fm(r.est)}</td>
+      <td class="${r.estYoy>0?'up':'down'}">${nd(r.estYoy)}</td>
+      <td class="l">${sp.length>3?sparkSVG(sp,"--s1"):""}
+        <span class="tk">${esc(segs)}</span></td></tr>`;
+    }).join("") + "</tbody></table>";
+  document.querySelectorAll("#fltbl th.sortable").forEach(h=>{
+    const go = () => {
+      const k=h.dataset.col;
+      if (flSort===k) flDir=-flDir; else { flSort=k; flDir=-1; }
+      drawFlashTable();
+    };
+    h.addEventListener("click", go);
+    h.addEventListener("keydown", e=>{ if(e.key==="Enter"||e.key===" "){e.preventDefault();go();} });
+  });
+}
+
+function renderFlash(){
+  const v = document.getElementById("flashpane");
+  if (!FLASH){
+    v.innerHTML = `<div class="empty"><h3>속보 — 아직 수집 전입니다</h3>
+      <p>관세청 10일 단위 잠정치입니다. 월별 확정치보다 최대 35일 먼저 나옵니다.</p>
+      <code>python scripts/run_flash.py &amp;&amp; python scripts/build_flash.py</code></div>`;
+    return;
+  }
+  const a = FLASH.asOf, t = FLASH.total, rec = FLASH.reconcile;
+  const wdDiff = (t.wd!=null && t.wdPrev!=null) ? t.wd - t.wdPrev : null;
+
+  v.innerHTML = `
+    <div class="stats">
+      <div class="stat"><div class="k">기준</div>
+        <div class="v" style="font-size:20px">${esc(a.period)} ${esc(a.label)}</div>
+        <div class="d">확정 월별 통계보다 <b>${FLASH.leadDays}일 선행</b></div></div>
+      <div class="stat"><div class="k">전체 수출 누계</div>
+        <div class="v">$${fm(t.usd)}M</div>
+        <div class="d">누계 YoY <span class="${t.yoy>0?'up':'down'}">${t.yoy==null?"–":pct(t.yoy)}</span>
+          · 평일 일평균 <span class="${t.wdYoy>0?'up':'down'}">${t.wdYoy==null?"–":pct(t.wdYoy)}</span></div></div>
+      <div class="stat"><div class="k">월 착지 추정</div>
+        <div class="v">$${fm(t.est)}M</div>
+        <div class="d">작년 ${esc(a.prevPeriod)} $${fm(t.estPrevFull)}M
+          → <span class="${t.estYoy>0?'up':'down'}">${t.estYoy==null?"–":pct(t.estYoy)}</span></div></div>
+      <div class="stat"><div class="k">조업 여건</div>
+        <div class="v" style="font-size:20px">평일 ${t.wd??"–"}일</div>
+        <div class="d">작년 같은 순 ${t.wdPrev??"–"}일${wdDiff!=null&&wdDiff!==0
+          ? ` · <b>${wdDiff>0?"+":""}${wdDiff}일</b> 차이` : " · 동일"}</div></div>
+      <div class="stat"><div class="k">다음 발표</div>
+        <div class="v" style="font-size:20px">${esc(FLASH.next.when)}</div>
+        <div class="d">${esc(FLASH.next.what)}</div></div>
+    </div>
+
+    <p class="thesis">관세청은 한 달 수출을 <b>네 번</b> 발표합니다 — 1~10일(11일경),
+      1~20일(21일경), 월전체 잠정(익월 1일경), 월별 확정(익월 15일경). 이 탭은 앞의 셋을
+      씁니다. <b>월전체 잠정만으로도 확정치보다 15일, 상순 누계까지 쓰면 35일 빠릅니다.</b>
+      분기 실적이 나오기까지 75일이 걸리는 것과 비교하면, 여기가 가장 앞선 자리입니다.</p>
+
+    <div class="warn"><b>숫자를 읽는 순서</b> — ① <b>점유율 변화(%p)</b>가 가장 믿을 만합니다.
+      같은 순(旬) 안에서는 모든 품목이 같은 날짜를 공유하므로 조업일수의 영향을 받지 않습니다.
+      ② <b>평일 일평균 YoY</b>는 주말 배치 차이를 제거하지만 <b>공휴일은 반영하지 못합니다</b>
+      (이 API 가 조업일수를 주지 않습니다 — 명절이 낀 순에서는 여전히 왜곡됩니다).
+      ③ <b>누계 YoY</b>에는 조업일수 차이가 그대로 섞여 있습니다.
+      ④ <b>월 착지 추정</b>은 남은 기간을 올해의 평일 수로 채워 계산한 <b>금액</b> 전망입니다.
+      ${wdDiff!=null&&wdDiff!==0 ? `<br><b>이번 순은 평일이 작년보다 ${wdDiff>0?"+":""}${wdDiff}일
+        다릅니다 — 누계 YoY 와 평일 일평균 YoY 의 차이가 곧 그 착시의 크기입니다.</b>` : ""}</div>
+
+    <div class="panel p12">
+      <div class="phead"><h3 class="ptitle">주요 10대 품목 속보</h3>
+        <span class="unit">${esc(a.period)} ${esc(a.dt||a.label)} 누계 · 백만 USD</span></div>
+      <p class="pnote">이 API 는 상위 10대 품목만, <b>품목명 없이 번호로만</b> 돌려줍니다.
+        번호를 한 칸 밀려 읽으면 산업을 통째로 바꿔 읽게 되므로, 우리가 따로 수집한
+        SSD(HSK 8523511000) 실측 시계열과 대조해 확정했습니다
+        (레벨 상관 r=0.9999 · 전월비 상관 r=0.977).
+        <b>표 머리글을 누르면 그 열로 정렬</b>됩니다.</p>
+      <div class="tscroll" id="fltbl"></div>
+    </div>
+
+    <div class="panels">
+      ${(FLASH.ratios||[]).map(r=>`<div class="panel p6">
+        <div class="phead"><h3 class="ptitle">${esc(r.name)}</h3>
+          <span class="unit">${esc(r.num)} ÷ ${esc(r.den)}</span></div>
+        <div class="stat" style="padding:0">
+          <div class="v">${r.prev==null?"–":r.prev} → ${r.now==null?"–":r.now}</div>
+          <div class="d"><span class="${r.chgPct>0?'up':'down'}">${r.chgPct==null?"–":pct(r.chgPct)}</span>
+            ${r.risingMeans?` · 상승 = ${esc(r.risingMeans)}`:""}</div></div>
+        <p class="pnote" style="margin-top:12px">${esc(r.note||"")}</p></div>`).join("")}
+    </div>
+
+    ${rec ? `<div class="warn" style="border-left-color:var(--${rec.ok?"good":"crit"})">
+      <b>잠정↔확정 정합성</b> — ${esc(rec.period)} 월전체 잠정 $${fm(rec.flash)}M vs
+      확정 통계 $${fm(rec.confirmed)}M = <b>${rec.gapPct>0?"+":""}${rec.gapPct}%</b>
+      ${rec.ok ? `(허용 ±${rec.tol}% 이내 — 잠정치와 확정치의 차이는 정상입니다)`
+               : `<b>— 허용 ±${rec.tol}% 를 벗어났습니다. 슬롯 매핑이나 단위를 의심해야 합니다.</b>`}
+      </div>` : ""}
+
+    ${FLASH.countryVerified && (FLASH.countries||[]).length ? `
+    <div class="panel p12">
+      <div class="phead"><h3 class="ptitle">주요 10대 교역국 속보</h3>
+        <span class="unit">${esc(a.period)} ${esc(a.label)} 누계</span></div>
+      <div class="tscroll"><table class="wt"><thead><tr>
+        <th class="l">국가</th><th>점유율 Δ%p</th><th>점유율 %</th>
+        <th>누계 YoY</th><th>누계 $M</th><th>착지추정 $M</th></tr></thead><tbody>
+        ${FLASH.countries.map(r=>`<tr><td class="l"><span class="it">${esc(r.label)}</span></td>
+          <td>${r.shareChgPp==null?"–":`<span class="chip ${r.shareChgPp>0?'up':'down'}">${r.shareChgPp>0?"+":""}${r.shareChgPp}%p</span>`}</td>
+          <td>${r.share==null?"–":r.share+"%"}</td>
+          <td class="${r.yoy>0?'up':'down'}">${r.yoy==null?"–":pct(r.yoy)}</td>
+          <td>${fm(r.usd)}</td><td>${r.est==null?"–":fm(r.est)}</td></tr>`).join("")}
+      </tbody></table></div></div>`
+    : (FLASH.countryCollected ? `<div class="warn"><b>국가별 속보 — 검증 대기</b><br>
+        ${esc(FLASH.countryNote)} 데이터는 이미 받아 두었고, 번호↔국가 대응이 확인되면
+        자동으로 이 자리에 표시됩니다.
+        <code style="font-family:var(--mono);font-size:11px">python scripts/verify_flash.py --countries</code>
+        </div>` : "")}
+
+    <div class="warn"><b>이 레이어의 한계</b> — ① <b>잠정치</b>입니다. 다음 발표 때 소급 조정됩니다
+      (조정 내역은 revisions 표에 남습니다). ② 상위 10대 품목·10대 교역국만 나옵니다.
+      HSK 10단위 분해도, <b>품목×국가 교차도 불가능</b>합니다 — 그건 월별 확정 데이터가 나온 뒤
+      워치리스트·밸류체인 탭에서 봐야 합니다. ③ 품목 분류는 관세청 속보 기준이라
+      우리 워치리스트의 HSK 분류와 경계가 정확히 일치하지 않습니다(예: '컴퓨터 주변기기'의
+      약 78%가 SSD).</div>`;
+  drawFlashTable();
+}
+
 /* ================= 밸류체인 (해외 현지생산 보정) ================= */
 let CHAINS = null, chainMkt = {};
 const VCLS = {localizing:"vd-loc", mixed:"vd-mix", contracting:"vd-bad",
@@ -906,12 +1080,16 @@ function sigCard(title, sub, keys, WL, fmt){
       : "<li>해당 품목 없음</li>"}</ol></div>`;
 }
 
-let scanPane = "uni";   // 기본은 전체 유니버스 — "먼저 전산업을 보고 특정 산업으로"
+// 기본은 속보 — 이 대시보드에서 가장 최신인 화면이다(확정치보다 최대 35일 앞선다).
+// 속보가 없으면 전체 유니버스로 떨어진다("먼저 전산업을 보고 특정 산업으로").
+let scanPane = "flash";
 
 function renderScan(WL){
   const v = document.getElementById("view");
   v.innerHTML = `
     <div class="subtabs" role="tablist">
+      <button class="subtab" role="tab" data-pane="flash" aria-selected="${scanPane==="flash"}">
+        속보<span class="tnum">${FLASH?FLASH.asOf.period+" "+FLASH.asOf.label:"미수집"}</span></button>
       <button class="subtab" role="tab" data-pane="uni" aria-selected="${scanPane==="uni"}">
         전체 유니버스<span class="tnum">${UNI?UNI.totals.nHs4+"개 항":"미수집"}</span></button>
       <button class="subtab" role="tab" data-pane="wl" aria-selected="${scanPane==="wl"}">
@@ -919,12 +1097,14 @@ function renderScan(WL){
       <button class="subtab" role="tab" data-pane="chain" aria-selected="${scanPane==="chain"}">
         밸류체인<span class="tnum">${CHAINS?CHAINS.chains.length+"개":"미수집"}</span></button>
     </div>
+    <div id="flashpane" ${scanPane==="flash"?"":"hidden"}></div>
     <div id="unipane" ${scanPane==="uni"?"":"hidden"}></div>
     <div id="wlpane" ${scanPane==="wl"?"":"hidden"}></div>
     <div id="chainpane" ${scanPane==="chain"?"":"hidden"}></div>`;
   v.querySelectorAll(".subtab").forEach(b=>b.addEventListener("click",()=>{
     scanPane = b.dataset.pane; renderScan(WL);
   }));
+  if (scanPane === "flash"){ renderFlash(); return; }
   if (scanPane === "uni"){ renderUniverse(); return; }
   if (scanPane === "chain"){ renderChains(); return; }
   if (!WL){
@@ -1032,7 +1212,7 @@ function selectTab(key){
   [...document.querySelectorAll(".tab")].forEach(b =>
     b.setAttribute("aria-selected", String(b.dataset.key === key)));
   if (key === SCAN_KEY){
-    if (WATCH || UNI || CHAINS) renderScan(WATCH);
+    if (WATCH || UNI || CHAINS || FLASH) renderScan(WATCH);
     else document.getElementById("view").innerHTML =
       `<div class="empty"><h3>전산업 스캐너 — 아직 수집 전입니다</h3>
        <p>워치리스트는 <b>품목별 국가별 API</b>를 따로 받습니다. 섹터 수집과 별개의 단계입니다.</p>
@@ -1053,16 +1233,18 @@ function selectTab(key){
 // 섹터(manifest)와 워치리스트는 **서로 독립**이다. 한쪽이 없어도 다른 쪽은 떠야 한다.
 // (초기에 manifest 로딩 실패가 스캐너까지 같이 죽이는 구조였다)
 Promise.allSettled([getJSON("data/manifest.json"), getJSON("data/watchlist.json"),
-                    getJSON("data/universe.json"), getJSON("data/chains.json")])
-  .then(([mr, wr, ur, cr]) => {
+                    getJSON("data/universe.json"), getJSON("data/chains.json"),
+                    getJSON("data/flash.json")])
+  .then(([mr, wr, ur, cr, fr]) => {
     MANIFEST = mr.status === "fulfilled" ? mr.value : {sectors: []};
     WATCH    = wr.status === "fulfilled" ? wr.value : null;
     UNI      = ur.status === "fulfilled" ? ur.value : null;
     CHAINS   = cr.status === "fulfilled" ? cr.value : null;
-    if (!WATCH && UNI) scanPane = "uni";
+    FLASH    = fr.status === "fulfilled" ? fr.value : null;
+    if (!FLASH) scanPane = UNI ? "uni" : (WATCH ? "wl" : "chain");
     const m = MANIFEST, ready = (m.sectors||[]).filter(s=>s.ready);
 
-    if (!ready.length && !WATCH && !UNI && !CHAINS){
+    if (!ready.length && !WATCH && !UNI && !CHAINS && !FLASH){
       document.getElementById("view").innerHTML = `
         <div class="empty">
           <h3>아직 데이터가 없습니다</h3>
@@ -1078,10 +1260,13 @@ Promise.allSettled([getJSON("data/manifest.json"), getJSON("data/watchlist.json"
     document.getElementById("meta").innerHTML =
       `갱신 <b>${esc(m.generatedAt || WATCH?.builtAt || "–")}</b><br>` +
       (asOf ? `기준월 <b>${esc(asOf)}</b><br>` : "") +
+      (FLASH ? `속보 <b>${esc(FLASH.asOf.period)} ${esc(FLASH.asOf.label)}</b><br>` : "") +
       `단위 <b>백만 USD (FOB)</b>`;
 
-    const nScan = UNI ? UNI.totals.nHs4 + "개 항"
-      : (WATCH ? WATCH.items.filter(r=>r.ready).length + "품목" : "미수집");
+    // 탭 배지는 **가장 최신인 레이어**를 보여준다. 속보가 있으면 그게 제일 앞선 숫자다.
+    const nScan = FLASH ? `${FLASH.asOf.period} ${FLASH.asOf.label}`
+      : (UNI ? UNI.totals.nHs4 + "개 항"
+      : (WATCH ? WATCH.items.filter(r=>r.ready).length + "품목" : "미수집"));
     document.getElementById("tabs").innerHTML =
       `<button class="tab" role="tab" data-key="${SCAN_KEY}" aria-selected="false">
         전산업 스캐너<span class="tnum">${esc(nScan)}</span></button>` +
@@ -1105,11 +1290,11 @@ Promise.allSettled([getJSON("data/manifest.json"), getJSON("data/watchlist.json"
 
     const want = location.hash.slice(1);
     const known = want === SCAN_KEY || (m.sectors||[]).some(s=>s.key===want);
-    selectTab(known ? want : ((WATCH||UNI||CHAINS) ? SCAN_KEY : ready[0].key));
+    selectTab(known ? want : ((WATCH||UNI||CHAINS||FLASH) ? SCAN_KEY : ready[0].key));
   });
 
 const reflow = () => {
-  if (CUR === SCAN_KEY && (WATCH||UNI||CHAINS)) renderScan(WATCH);
+  if (CUR === SCAN_KEY && (WATCH||UNI||CHAINS||FLASH)) renderScan(WATCH);
   else if (CUR && CACHE[CUR]) renderSector(CACHE[CUR]);
 };
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", reflow);
