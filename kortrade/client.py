@@ -87,6 +87,10 @@ class CustomsClient:
     endpoints: dict[str, EndpointSpec] = field(init=False)
     calls_made: int = field(init=False, default=0)
     _last_call: float = field(init=False, default=0.0)
+    # 벽시계 예산. CI 잡이 통째로 타임아웃되면 어느 단계가 먹었는지조차 알 수 없다.
+    # 예산을 주면 스크립트가 **스스로 멈추고 무엇까지 했는지 보고**한다.
+    _deadline: float | None = field(init=False, default=None)
+    last_elapsed: float = field(init=False, default=0.0)
 
     def __post_init__(self) -> None:
         cfg = yaml.safe_load(self.config_path.read_text(encoding="utf-8"))
@@ -102,6 +106,19 @@ class CustomsClient:
         self.session.headers["User-Agent"] = "kortrade/1.0 (+customs trade proxy pipeline)"
 
     # ------------------------------------------------------------------ 요청
+
+    # ------------------------------------------------------------------ 시간 예산
+
+    def set_budget(self, seconds: float | None) -> None:
+        """이 시점부터 seconds 안에 끝낸다. None 이면 무제한."""
+        self._deadline = None if seconds is None else time.monotonic() + seconds
+
+    def budget_left(self) -> float | None:
+        return None if self._deadline is None else self._deadline - time.monotonic()
+
+    def out_of_budget(self) -> bool:
+        left = self.budget_left()
+        return left is not None and left <= 0
 
     def _throttle(self) -> None:
         delta = time.monotonic() - self._last_call
@@ -139,12 +156,26 @@ class CustomsClient:
 
         last_exc: Exception | None = None
         for attempt in range(self.max_retries):
+            if self.out_of_budget():
+                raise CustomsAPIError(
+                    f"{endpoint}: 시간 예산 소진 — 여기서 멈춥니다 (params={params})",
+                    permanent=True)
             self._throttle()
+            # 남은 예산보다 긴 읽기 타임아웃은 의미가 없다. 예산을 넘겨서 기다리면
+            # CI 잡 전체가 타임아웃되고, 그러면 어느 단계였는지조차 로그에 안 남는다.
+            ct, rt = self.timeout
+            left = self.budget_left()
+            if left is not None:
+                ct, rt = min(ct, max(2, left)), min(rt, max(3, left))
+            t0 = time.monotonic()
             try:
-                resp = self.session.get(url, timeout=self.timeout)
+                resp = self.session.get(url, timeout=(ct, rt))
                 self.calls_made += 1
                 resp.raise_for_status()
-                return parse_response(resp.content, spec.item_fields)
+                out = parse_response(resp.content, spec.item_fields)
+                self.last_elapsed = time.monotonic() - t0
+                log.debug("%s %.1fs %d행 %s", endpoint, self.last_elapsed, len(out), params)
+                return out
             except CustomsAPIError as exc:
                 # 잘못된 파라미터는 재시도해도 같은 답이 온다. 즉시 올린다.
                 if exc.permanent:
@@ -152,9 +183,13 @@ class CustomsClient:
                 last_exc = exc
             except (requests.RequestException, ET.ParseError) as exc:
                 last_exc = exc
+            self.last_elapsed = time.monotonic() - t0
+            if attempt + 1 >= self.max_retries:
+                break
             backoff = 1.5 * (2**attempt)
-            log.warning("%s 호출 실패(%s/%s): %s — %.1fs 후 재시도",
-                        endpoint, attempt + 1, self.max_retries, last_exc, backoff)
+            log.warning("%s 호출 실패(%s/%s, %.0fs 소요): %s — %.1fs 후 재시도",
+                        endpoint, attempt + 1, self.max_retries, self.last_elapsed,
+                        last_exc, backoff)
             time.sleep(backoff)
 
         raise CustomsAPIError(f"{endpoint} 호출이 {self.max_retries}회 모두 실패: {last_exc}")

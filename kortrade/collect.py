@@ -104,6 +104,8 @@ class Collector:
     client: CustomsClient
     store: Store
     revision_window: int = DEFAULT_REVISION_WINDOW
+    # 속보 API 가 긴 조회구간에서 느려지는 경우를 대비해 창 크기를 조절할 수 있게 둔다.
+    flash_window_months: int = 12
 
     # ------------------------------------------------------------ 공통
 
@@ -250,9 +252,13 @@ class Collector:
         구간당 1콜, 2년이면 종류별 2콜이라 전부 다시 받아도 부담이 없다.
         """
         totals = {"inserted": 0, "updated": 0, "unchanged": 0}
+        window = min(self.client.max_months_per_call, self.flash_window_months)
         for kind in kinds:
             endpoint = f"flash_{kind}"
-            for s, e in chunk_periods(start, end, self.client.max_months_per_call):
+            for s, e in chunk_periods(start, end, window):
+                if self.client.out_of_budget():
+                    log.warning("시간 예산 소진 — %s %s~%s 이후는 건너뜁니다", kind, s, e)
+                    return totals
                 rows = self._fetch(endpoint, {"strtYymm": s, "endYymm": e}, force=True)
                 recs = []
                 for r in rows:
@@ -278,7 +284,10 @@ class Collector:
                 st = self.store.upsert_flash(recs)
                 for k in totals:
                     totals[k] += st[k]
-                log.info("속보 %s %s~%s: %d행 → %s", kind, s, e, len(recs), st)
+                left = self.client.budget_left()
+                log.info("속보 %s %s~%s: %.1fs · %d행 → %s%s", kind, s, e,
+                         self.client.last_elapsed, len(recs), st,
+                         "" if left is None else f" (남은 예산 {left:.0f}s)")
         return totals
 
     def collect_for_companies(self, companies: dict, start: str, end: str) -> dict[str, int]:
