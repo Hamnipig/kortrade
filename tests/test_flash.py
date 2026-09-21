@@ -113,6 +113,52 @@ def test_cumulative_not_incremental():
     print("  ✓ 누계→구간 — 상순 30 / 중순 35 / 하순 35 ($B)")
 
 
+def test_bad_month_never_enters_and_never_crashes():
+    """회귀: period='2026-20' 한 행이 빌드를 통째로 죽였다 (IllegalMonthError).
+
+    방어선 세 겹을 전부 확인한다.
+      1. 수집기가 달력에 없는 달을 애초에 저장하지 않는다
+      2. Store 가 이미 들어간 불량 행을 지운다 (DB 를 레포에 커밋하는 구조라
+         한 번 들어간 행은 계속 따라다닌다)
+      3. 빌드가 남은 불량 행을 만나도 죽지 않고 건너뛴다
+    """
+    # 1) 수집 단계 — parse_period 가 막는다
+    assert F.parse_period("2026", "08") == "2026-08"
+    for y, m in (("2026", "20"), ("2026", "0"), ("2026", "13"), ("2026", None),
+                 ("2026", "총계"), ("1999", "08")):
+        assert F.parse_period(y, m) is None, (y, m)
+    assert F.split_period("2026-20") is None
+    assert F.split_period("2026-08") == (2026, 8)
+    assert F.split_period("") is None
+    src = (ROOT / "kortrade" / "collect.py").read_text(encoding="utf-8")
+    assert "parse_period(r.get(\"year\"), r.get(\"month\"))" in src, \
+        "수집기가 기간을 검증하지 않는다"
+    assert "버린 행 원문" in src, \
+        "버린 행을 원문으로 찍어야 응답의 실제 모양을 알 수 있다"
+
+    # 2) Store 단계 — 이미 들어간 행 청소
+    db = Path(tempfile.mkdtemp()) / "t.sqlite"
+    good = {"period": "2026-08", "seq": 3, "kind": "item", "slot": "00",
+            "dt": "01~31", "day_to": 31, "exp_usd": 100}
+    with Store(db) as s:
+        s.upsert_flash([good,
+                        {**good, "period": "2026-20", "day_to": 20},
+                        {**good, "period": "2026-00"},
+                        {**good, "period": "abcd-ef"}])
+        assert s.purge_bad_flash() == ["2026-00", "2026-20", "abcd-ef"]
+        left = [r["period"] for r in s.conn.execute("SELECT period FROM flash_trade")]
+        assert left == ["2026-08"], left
+        assert s.purge_bad_flash() == []          # 멱등
+
+    # 3) 빌드 단계 — 불량 행이 남아 있어도 살아남는다
+    build = (ROOT / "scripts" / "build_flash.py").read_text(encoding="utf-8")
+    assert "F.split_period(r[\"period\"])" in build, "빌드가 기간을 거르지 않는다"
+    assert "purge_bad_flash" in build, "빌드가 DB 청소를 하지 않는다"
+    assert "int(latest[:4])" not in build and "int(py[:4])" not in build, \
+        "기간을 다시 맨손으로 파싱하고 있다 — split_period 를 쓸 것"
+    print("  ✓ 불량 period 방어 3겹 — 수집 차단 / DB 청소 / 빌드 스킵")
+
+
 def test_landing_adds_information():
     """착지 추정이 누계 YoY 와 같은 숫자면 아무것도 더하지 않은 것이다.
 
