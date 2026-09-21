@@ -1,0 +1,33 @@
+{
+ "checkedAt": "2026-09-21 13:57 KST",
+ "configVersion": "2026-09-21a",
+ "item": {
+  "checks": [
+   {
+    "name": "slot00 전체 ↔ 유니버스(97개 장) 합계",
+    "months": 0,
+    "r": null,
+    "ratioMedian": null,
+    "expect": [
+     0.95,
+     1.05
+    ],
+    "ok": false,
+    "why": "두 경로로 받은 같은 달 전국 수출 총액. 단위(천달러↔달러)가 틀리면 1000배로 튄다."
+   },
+   {
+    "name": "slot08 컴퓨터주변기기 ⊃ SSD(8523511000)",
+    "months": 0,
+    "r": null,
+    "ratioMedian": null,
+    "expect": [
+     0.5,
+     0.99
+    ],
+    "ok": false,
+    "why": "SSD 가 부분집합이므로 비율은 1 미만이어야 하고, 움직임은 같이 가야 한다."
+   }
+  ],
+  "ok": false
+ }
+}
