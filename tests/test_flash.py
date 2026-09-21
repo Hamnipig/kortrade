@@ -208,6 +208,59 @@ def test_end_to_end_build():
           f"정합성 {p['reconcile']['gapPct']:+.2f}%")
 
 
+def test_every_step_is_time_boxed():
+    """단계마다 타임아웃이 있어야 한다.
+
+    회귀 방지: 첫 실행이 잡 한도 25분을 넘겨 **통째로 취소**됐고, 그러면 어느
+    단계가 시간을 먹었는지 로그에 남지 않는다. 단계별로 끊어 두면 범인이
+    이름으로 찍히고 뒤 단계는 계속 돈다.
+    """
+    import yaml
+    d = yaml.safe_load((ROOT / ".github" / "workflows" / "flash.yml").read_text(encoding="utf-8"))
+    job = d["jobs"]["flash"]
+    steps = [s for s in job["steps"] if "run" in s]
+    missing = [s.get("name", "?") for s in steps if not s.get("timeout-minutes")]
+    assert not missing, f"타임아웃 없는 실행 단계: {missing}"
+    total = sum(s["timeout-minutes"] for s in steps)
+    cap = job["timeout-minutes"]
+    assert total < cap, f"단계 합계 {total}분이 잡 한도 {cap}분 이상 — 잡이 먼저 죽는다"
+
+    # 국가 검증은 응답 크기가 예측되지 않는 유일한 호출이다. 예약 실행에서 기본 off.
+    # YAML 1.1 함정 재등장 — `on:` 키가 boolean True 로 파싱된다.
+    # (config/chains.yaml 의 국가코드 NO→false 와 같은 뿌리다)
+    on = d.get("on", d.get(True))
+    inp = on["workflow_dispatch"]["inputs"]["verify_countries"]
+    assert inp["default"] is False, "국가 검증이 기본 on 이면 매 예약 실행이 위험해진다"
+
+    up = yaml.safe_load((ROOT / ".github" / "workflows" / "update.yml").read_text(encoding="utf-8"))
+    fl = next(s for s in up["jobs"]["collect"]["steps"]
+              if "속보" in (s.get("name") or ""))
+    assert fl.get("continue-on-error") is True, \
+        "월별 확정 파이프라인이 속보 실패로 죽으면 안 된다"
+    print(f"  ✓ 단계 시간 상자 — 합계 {total}분 < 잡 {cap}분, 국가검증 기본 off, 월별과 격리")
+
+
+def test_client_honors_time_budget():
+    """예산을 넘기면 스스로 멈춰야 한다. 안 멈추면 CI 잡이 대신 죽는다."""
+    from kortrade.client import CustomsClient, CustomsAPIError
+    c = CustomsClient(service_key="x")
+    assert c.budget_left() is None and not c.out_of_budget()
+    c.set_budget(0)
+    assert c.out_of_budget()
+    try:
+        c.call("flash_item", strtYymm="202601", endYymm="202601")
+    except CustomsAPIError as exc:
+        assert "예산" in str(exc) and exc.permanent, exc
+    else:
+        raise AssertionError("예산이 소진됐는데 호출을 시도했다")
+    assert c.calls_made == 0, "예산 소진 상태에서 네트워크를 건드렸다"
+
+    run = (ROOT / "scripts" / "run_flash.py").read_text(encoding="utf-8")
+    assert "프로브" in run, "본 수집 전에 1개월 프로브로 응답 속도를 재야 한다"
+    assert "--budget-seconds" in run and "--window-months" in run
+    print("  ✓ 시간 예산 — 소진 시 호출 없이 중단, 프로브로 응답 속도 선측정")
+
+
 def test_wired_into_automation():
     """자동 갱신에 붙어 있어야 한다. 붙지 않은 레이어는 다음 달이면 죽은 데이터가 된다."""
     fl = (ROOT / ".github" / "workflows" / "flash.yml").read_text(encoding="utf-8")
