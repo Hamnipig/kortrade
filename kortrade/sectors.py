@@ -31,6 +31,15 @@ class Sector:
     dominant: str | None = None
     categories: dict[str, dict] = field(default_factory=dict)
     countries: list[str] = field(default_factory=list)
+    # 순위와 무관하게 **항상 표시할** 시군구. ODM 생산 거점처럼
+    # "여기가 안 보인다"는 사실 자체가 정보인 지역을 고정해 둔다.
+    # 부분 문자열로 맞춘다 — '세종'이 '세종특별자치시'로 오든 뭐로 오든 잡히게.
+    pinned_places: list[dict] = field(default_factory=list)
+    # 중계무역 허브로 보는 국가. {코드: {why: 근거}}.
+    # 확산도를 낼 때 **허브 포함/제외 두 벌**을 내기 위해 쓴다. 허브 물량은
+    # 최종 소비지가 아니라서, 빼고 봐야 진짜 시장 개척인지 알 수 있다.
+    # 코드가 아니라 설정에 두는 이유: 섹터마다 다르고 시간이 지나면 바뀐다.
+    hub_countries: dict[str, dict] = field(default_factory=dict)
     notes: str = ""
 
     @property
@@ -59,6 +68,19 @@ class Sector:
             errs.append(f"{self.key}: dominant '{self.dominant}' 가 categories 에 없음")
         if self.status not in ("active", "draft"):
             errs.append(f"{self.key}: status 는 active/draft 만 허용")
+        for cc in self.hub_countries:
+            # ★ YAML 1.1 함정: 따옴표 없는 NO(노르웨이)·ON·OFF 는 **불리언**으로 파싱된다.
+            #   그러면 키가 False 가 되어 조용히 아무 국가와도 안 맞는다.
+            if not isinstance(cc, str):
+                errs.append(f"{self.key}: hub_countries 키 {cc!r} 가 문자열이 아님 "
+                            "— YAML 에서 따옴표로 감싸세요 (NO/ON/OFF 는 불리언이 됩니다)")
+            elif len(cc) != 2 or not cc.isalpha():
+                errs.append(f"{self.key}: hub_countries '{cc}' — 국가코드는 2자리 영문")
+            elif self.countries and cc not in self.countries:
+                # 수집하지 않는 국가를 허브로 적어두면 영원히 0 으로 잡혀
+                # "허브 비중이 낮다"는 틀린 결론이 나온다.
+                errs.append(f"{self.key}: hub_countries '{cc}' 가 countries 에 없음 "
+                            "— 수집하지 않는 국가는 허브로 세어지지 않습니다")
         return errs
 
 
@@ -70,6 +92,8 @@ def load_sectors(directory: Path | None = None, include_draft: bool = True) -> l
         s = Sector(
             key=raw.get("key", p.stem), name=raw.get("name", p.stem), path=p,
             subtitle=raw.get("subtitle", ""), status=raw.get("status", "active"),
+            pinned_places=list(raw.get("pinned_places") or []),
+            hub_countries=dict(raw.get("hub_countries") or {}),
             order=int(raw.get("order", 99)), dominant=raw.get("dominant"),
             categories=raw.get("categories") or {},
             countries=raw.get("countries") or [], notes=raw.get("notes", ""),
