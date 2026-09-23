@@ -38,6 +38,11 @@ jobs:
 
       - run: pip install -r requirements.txt
 
+      # 수집 전에 파일 누락·구버전을 1초 만에 잡는다. 수집 한복판의 ImportError 방지.
+      - name: 배포 정합성 점검
+        timeout-minutes: 2
+        run: python scripts/selfcheck.py
+
       - name: 인증키 확인
         env:
           DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
