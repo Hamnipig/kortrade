@@ -85,6 +85,27 @@ jobs:
           if [ "${{ inputs.full_refresh }}" = "true" ]; then EXTRA="--revision-window 999"; fi
           python scripts/run_update.py --start "$START" --sectors all $EXTRA
 
+      # 섹터 국가별(HS x 국가). **단가(P/Q)와 확산도가 전적으로 이 수집에 달려 있다.**
+      #
+      # 왜 따로 도는가 — 위 '수집' 단계는 --sectors 모드라 시군구 API 만 쓴다.
+      # 시군구 API 응답에는 **중량 필드가 아예 없어서** 단가를 낼 수 없다.
+      # 중량(expWgt)은 품목별-국가별 API 에서만 온다. 그래서 한 번 더 돈다.
+      # (2026-09-01 관세청 지침으로 시군구 중량·HSK10 이 비공개가 됐지만, 우리는
+      #  원래 둘 다 안 쓰고 있었다. 단가는 처음부터 국가 축에서만 나온다.)
+      #
+      # 실패해도 파이프라인을 죽이지 않는다 — 단가 패널만 비고 나머지는 그대로다.
+      # fetch_log 덕분에 중간에 잘려도 다음 실행이 이어서 받는다(최초 1회 약 2,900콜).
+      - name: 수집 — 섹터 국가별 (단가·확산도용, 중량 포함)
+        timeout-minutes: 30
+        continue-on-error: true
+        env:
+          DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
+          START: ${{ inputs.start || '202001' }}
+        run: |
+          EXTRA=""
+          if [ "${{ inputs.full_refresh }}" = "true" ]; then EXTRA="--revision-window 999"; fi
+          python scripts/run_update.py --start "$START" --layer sector $EXTRA
+
       # 워치리스트는 **다른 API**(품목별 국가별)를 쓴다. 섹터 수집과 분리해 두면
       # 한쪽이 실패해도 다른 쪽 데이터는 살아남는다.
       - name: 수집 — 전산업 워치리스트
@@ -132,6 +153,19 @@ jobs:
           python scripts/build_chains.py
           python scripts/build_battery.py
           python scripts/build_flash.py || echo "속보 건너뜀 (수집 실패)"
+
+      # 진단 — 시군구 전체 덤프. 사이트 파일을 만들지 않고 **로그로만** 남긴다.
+      #
+      # 화면은 카테고리당 상위 8개 시군구만 싣는데, 기초(330499)는 그 8개가 카테고리의
+      # 58% 뿐이다. 그래서 "화성·음성·세종이 안 보인다"가 순위 컷오프 때문인지
+      # 애초에 안 잡히는 것인지 구분이 안 됐다. 이 덤프가 그 질문에 답한다.
+      # (지역 귀속은 제도상 '제조자 사업장' 기준이지만 수출자 자기신고 항목이라
+      #  품목·기업마다 품질이 다르다 — 실제로 화성은 색조에서만 1위다)
+      - name: 진단 — 시군구 전체 덤프 (로그 전용)
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 3
+        run: python scripts/dump_places.py --top 30 || echo "덤프 건너뜀"
 
       # DB 가 GitHub 파일 한도(100MB)에 가까워지면 조용히 push 가 깨진다. 미리 경고한다.
       - name: DB 크기 점검
