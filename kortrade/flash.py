@@ -29,6 +29,8 @@ from pathlib import Path
 
 import yaml
 
+from .stats import corr, ols, predict  # noqa: F401  (하위호환 재수출)
+
 CONFIG = Path(__file__).resolve().parent.parent / "config" / "flash.yaml"
 
 # 원본 단위(천 달러) → 달러
@@ -249,6 +251,36 @@ class SlotSet:
         return slot
 
 
+# ------------------------------------------------------------------ 나우캐스트
+#
+# 속보 10대 품목에 없는 품목을 '기타(잔차)'에 회귀해 앞당겨 본다.
+# 핵심 원칙 하나 — **연동이 약하면 숫자를 내지 않는다.** R² 가 낮다는 것은
+# 속보가 그 품목에 대해 더해 주는 정보가 없다는 뜻이고, 그럼에도 추정치를
+# 내밀면 근거 없는 수치를 만드는 것이다.
+
+# 회귀는 kortrade/stats.py 로 옮겼다. 레이어끼리 서로 import 하지 않기 위해서다
+# (battery.py 가 flash.py 에서 ols 를 가져오다가 배포 누락으로 수집이 멈춘 적이 있다).
+# 이름은 하위호환을 위해 여기서도 그대로 보인다.
+
+
+@dataclass
+class NowcastItem:
+    key: str
+    name: str
+    hs4: list[str] = field(default_factory=list)
+    tickers: list[str] = field(default_factory=list)
+    note: str = ""
+    watch: list[str] = field(default_factory=list)
+
+
+@dataclass
+class NowcastCfg:
+    min_r2: float = 0.30
+    min_months: int = 8
+    window_months: int = 30
+    items: list[NowcastItem] = field(default_factory=list)
+
+
 @dataclass
 class Ratio:
     key: str
@@ -267,6 +299,7 @@ class FlashConfig:
     item: SlotSet
     country: SlotSet
     ratios: list[Ratio]
+    nowcast: NowcastCfg
 
     def sets(self) -> dict[str, SlotSet]:
         return {"item": self.item, "country": self.country}
@@ -287,6 +320,17 @@ class FlashConfig:
             for side in (r.num, r.den):
                 if side not in known:
                     errs.append(f"ratio '{r.key}': 알 수 없는 슬롯 '{side}'")
+        keys = [i.key for i in self.nowcast.items]
+        for k in set(keys):
+            if keys.count(k) > 1:
+                errs.append(f"nowcast key '{k}' 중복")
+        for i in self.nowcast.items:
+            if not i.hs4:
+                errs.append(f"nowcast '{i.key}': hs4 가 비어 있다")
+            for c in i.hs4:
+                if not (isinstance(c, str) and len(c) == 4 and c.isdigit()):
+                    errs.append(f"nowcast '{i.key}': '{c}' 는 HS 4단위가 아니다"
+                                f" (YAML 이 따옴표 없는 1902 를 숫자로 읽는다)")
         return errs
 
 
@@ -313,4 +357,20 @@ def load(path: Path | None = None) -> FlashConfig:
         country=_slotset("country", cfg.get("country") or {}),
         ratios=[Ratio(**{k: v for k, v in r.items() if k in Ratio.__annotations__})
                 for r in (cfg.get("ratios") or [])],
+        nowcast=_nowcast(cfg.get("nowcast") or {}),
     )
+
+
+def _nowcast(d: dict) -> NowcastCfg:
+    items = []
+    for raw in (d.get("items") or []):
+        kw = {k: v for k, v in raw.items() if k in NowcastItem.__annotations__}
+        kw["note"] = " ".join(str(kw.get("note", "")).split())
+        # YAML 이 따옴표 없는 1902 를 정수로 읽는다. 문자열로 되돌린다.
+        kw["hs4"] = [str(c).zfill(4) for c in (kw.get("hs4") or [])]
+        kw["watch"] = [str(c) for c in (kw.get("watch") or [])]
+        items.append(NowcastItem(**kw))
+    return NowcastCfg(min_r2=float(d.get("min_r2", 0.30)),
+                      min_months=int(d.get("min_months", 8)),
+                      window_months=int(d.get("window_months", 30)),
+                      items=items)

@@ -26,7 +26,10 @@ from pathlib import Path
 
 import yaml
 
-from .flash import ols, predict          # 회귀는 속보 레이어와 같은 구현을 쓴다
+# ★ 레이어는 다른 레이어를 import 하지 않는다. 공용 통계는 stats 에서 가져온다.
+#   (전에 flash.py 에서 가져오다가, battery.py 만 배포하고 flash.py 를 빼먹어
+#    ImportError 로 수집이 통째로 멈춘 적이 있다.)
+from .stats import corr, ols, predict   # noqa: F401
 
 CONFIG = Path(__file__).resolve().parent.parent / "config" / "battery.yaml"
 
@@ -181,18 +184,6 @@ def unit_price(usd: float | None, wgt: float | None,
     if not usd or not wgt or wgt < min_wgt:
         return None
     return usd / wgt
-
-
-def corr(a: list[float], b: list[float]) -> float | None:
-    n = len(a)
-    if n < 6 or n != len(b):
-        return None
-    ma, mb = sum(a) / n, sum(b) / n
-    da = sum((x - ma) ** 2 for x in a) ** 0.5
-    db = sum((y - mb) ** 2 for y in b) ** 0.5
-    if da == 0 or db == 0:
-        return None
-    return sum((x - ma) * (y - mb) for x, y in zip(a, b)) / (da * db)
 
 
 def growth(series: list[float | None]) -> list[float | None]:
