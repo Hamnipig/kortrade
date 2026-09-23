@@ -26,7 +26,12 @@ def test_sector_configs():
     assert errs == [], errs
     secs = load_sectors()
     keys = {s.key for s in secs}
-    assert {"cosmetics", "semiconductor", "battery"} <= keys, keys
+    # 2차전지 섹터(시군구 레이어)는 제거했다 (2026-09-23) — HS 6단위 추정 코드로
+    # 만든 draft 였고 한 번도 수집되지 않아 '미수집'으로만 떠 있었다. 검증된
+    # HSK 10단위 기반의 '2차전지·ESS' 탭이 그 자리를 대신한다(config/battery.yaml).
+    assert {"cosmetics", "semiconductor"} <= keys, keys
+    assert "battery" not in keys, \
+        "미수집 2차전지 섹터가 되살아났다 — 검증된 battery.yaml 레이어와 중복된다"
 
     cos = get_sector("cosmetics")
     assert cos.active and cos.dominant == "330499"
@@ -34,7 +39,7 @@ def test_sector_configs():
     assert all(len(h) == 6 and h.isdigit() for h in cos.codes)
 
     # 미검증 섹터가 실수로 active 가 되면 빈 데이터나 엉뚱한 품목이 조용히 쌓인다
-    for k in ("semiconductor", "battery"):
+    for k in ("semiconductor",):
         assert get_sector(k).status == "draft", f"{k} 는 코드 검증 전까지 draft 여야 한다"
     assert [s.key for s in load_sectors(include_draft=False)] == ["cosmetics"]
     print(f"  ✓ 섹터 설정 {len(secs)}개 / active {len(load_sectors(include_draft=False))}개")
@@ -126,8 +131,8 @@ def test_site_html_contract():
     assert 'name="viewport"' in html
     # 전 카테고리 비중변화가 0 근처일 때 축을 거기 맞추면 노이즈를 로테이션으로 오독한다
     assert "Y_FLOOR" in html
-    for key in ("cosmetics", "semiconductor", "battery"):
-        pass                                          # 탭은 manifest 에서 동적 생성
+    # 탭은 manifest 에서 동적 생성된다. 2차전지 전용 탭은 battery.json 이 만든다.
+    assert "BAT_KEY" in html and "data/battery.json" in html
     wf = (ROOT / ".github" / "workflows" / "update.yml").read_text(encoding="utf-8")
     assert "secrets.DATA_GO_KR_SERVICE_KEY" in wf
     assert "DATA_GO_KR_SERVICE_KEY:" in wf and "3028661a" not in wf, "인증키가 하드코딩되면 안 된다"
@@ -443,7 +448,11 @@ def test_value_chain_localization():
     assert ess["verdict"]["code"] == "localizing", ess["verdict"]
 
     html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
-    assert "renderChains" in html and "data/chains.json" in html
+    # 밸류체인 **탭**은 제거했다 (2026-09-23). 배터리 현지화 분석은 '2차전지·ESS'
+    # 탭으로 흡수했고, 거기서 원가·장비·선후행과 함께 읽는 편이 낫다.
+    assert "renderChains" not in html, "밸류체인 탭이 되살아났다"
+    # 다만 chains.json 은 계속 만든다 — 워치리스트 현지화 배지가 그걸 읽는다.
+    assert "data/chains.json" in html, "현지화 배지의 데이터 소스가 끊겼다"
     assert "localizationWarn" in html, "워치리스트에 현지화 경고가 없다"
     assert "v.finals" in html, "배지가 체인 합계가 아니라 품목별 판정을 써야 한다"
     assert "DART" in html, "통관 데이터의 한계 안내가 없다"
