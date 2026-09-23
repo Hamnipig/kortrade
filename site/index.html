@@ -216,6 +216,15 @@ tbody tr.newcat td{border-top:1px solid var(--rule)}
 .vd.vd-bad{border-left-color:var(--crit)}
 .vd.vd-good{border-left-color:var(--good)}
 .pu.loc{border-color:var(--s4);color:var(--s4)}
+/* 표 안에 들어가는 판정 배지. .vd 는 블록 카드라 셀에 넣으면 행이 부풀어 오른다. */
+.vdi{display:inline-block;font-size:11px;padding:1px 7px;border-radius:2px;
+  border:1px solid var(--rule);border-left-width:3px;color:var(--ink-2);
+  font-family:var(--sans);white-space:nowrap}
+.vdi.vd-loc{border-left-color:var(--s4)}
+.vdi.vd-mix{border-left-color:var(--s2)}
+.vdi.vd-bad{border-left-color:var(--crit);color:var(--crit)}
+.vdi.vd-good{border-left-color:var(--good);color:var(--good)}
+.vdi.vd-na{border-left-color:var(--mid)}
 </style>
 </head>
 <body>
@@ -744,6 +753,42 @@ function drawFlashTable(){
   });
 }
 
+/* 기타(잔차) = 전체 − 10대 품목 합계. **추정이 아니라 산술**이다 —
+   발표된 전체에서 발표된 10대를 뺀 값이라 10대 품목 표와 같은 출처다.
+   (여기에 회귀를 얹어 화장품·식품을 추정하던 패널은 2026-09-22 제거했다:
+    추정 오차가 실측 잠정치와 같은 화면에 섞이면 화면 전체가 의심스러워진다.) */
+function flashResidual(){
+  const R = FLASH.residual;
+  if (!R || R.usd == null) return "";
+  return `
+    <div class="panel p12">
+      <div class="phead"><h3 class="ptitle">기타 — 10대 품목 바깥</h3>
+        <span class="unit">전체 − 10대 합계 · 산술값</span></div>
+      <p class="pnote">이 API 는 상위 10대 품목만 주지만 <b>전체 수출</b>도 줍니다.
+        빼면 10대 밖의 나머지가 남습니다 — 화장품·식품·의약품·기계 등이 여기 들어 있습니다.
+        <b>품목별로 갈라 볼 수는 없지만</b>, 반도체(전체의 절반)가 빠진 잔차라
+        소비재·중간재 전반의 방향을 읽는 데는 전체 수출보다 낫습니다.</p>
+      <div class="stats">
+        <div class="stat"><div class="k">기타 누계</div>
+          <div class="v">$${fm(R.usd)}M</div>
+          <div class="d">전체의 ${R.share==null?"–":R.share+"%"}</div></div>
+        <div class="stat"><div class="k">누계 YoY</div>
+          <div class="v ${R.yoy>0?'up':'down'}">${R.yoy==null?"–":pct(R.yoy)}</div>
+          <div class="d">10대 품목과 방향이 갈리면 소비재 사이클이 따로 움직이는 중</div></div>
+        <div class="stat"><div class="k">월 착지 추정</div>
+          <div class="v">$${fm(R.est)}M</div>
+          <div class="d">작년 $${fm(R.estPrevFull)}M →
+            <span class="${R.estYoy>0?'up':'down'}">${R.estYoy==null?"–":pct(R.estYoy)}</span></div></div>
+      </div>
+      <div class="warn" style="margin-top:14px"><b>품목별로는 못 쪼갭니다</b> —
+        화장품·식품의 순 단위 실측은 <b>TRASS</b>(관세청 지정 교부대행기관)가
+        HSK 10단위로 제공하지만 유료이고 공개 API 가 없습니다(정회원 월 3~5만원 화면조회,
+        HS코드별 납품은 월 125만원). 무료 API 의 순 단위는 <b>성질별 10대 품목뿐</b>입니다.
+        회귀로 추정하던 기능이 있었으나 <b>제거했습니다</b> — 추정 오차가 실측 잠정치와
+        같은 화면에 섞이면 화면 전체를 의심하게 되기 때문입니다.</div>
+    </div>`;
+}
+
 function renderFlash(){
   const v = document.getElementById("flashpane");
   if (!FLASH){
@@ -802,6 +847,8 @@ function renderFlash(){
       <div class="tscroll" id="fltbl"></div>
     </div>
 
+    ${flashResidual()}
+
     <div class="panels">
       ${(FLASH.ratios||[]).map(r=>`<div class="panel p6">
         <div class="phead"><h3 class="ptitle">${esc(r.name)}</h3>
@@ -846,6 +893,228 @@ function renderFlash(){
       우리 워치리스트의 HSK 분류와 경계가 정확히 일치하지 않습니다(예: '컴퓨터 주변기기'의
       약 78%가 SSD).</div>`;
   drawFlashTable();
+}
+
+/* ================= 2차전지·ESS 심화 =================
+   수출액만 보는 레이어가 답하지 못하는 두 가지를 다룬다.
+     · 마진이 어디로 가는가  → 원가는 **수입** 데이터에 있다
+     · 지금 끌고 있는 단계는 → 단계 간 시차 상관으로 잰다                 */
+let BAT = null;
+const BSTAGE = {final:"완제품(셀)", component:"부품", material:"소재", equipment:"장비(CAPEX)"};
+const BVCLS = {turnaround:"vd-good", accelerating:"vd-good", bottoming:"vd-loc",
+               steady:"vd-na", decelerating:"vd-mix", contracting:"vd-bad",
+               expanding:"vd-good", compressing:"vd-bad", flat:"vd-na", unknown:"vd-na"};
+
+function drawSpread(mount, sp, months){
+  const W=760,H=240,M={t:16,r:20,b:34,l:52}, iw=W-M.l-M.r, ih=H-M.t-M.b;
+  const pts = (sp.series||[]).map((x,i)=>({i,x})).filter(p=>p.x!=null);
+  if (pts.length < 6){ mount.innerHTML='<p class="pnote">잔차를 그릴 데이터가 부족합니다.</p>'; return; }
+  const ys = pts.map(p=>p.x), lo=Math.min(0,...ys), hi=Math.max(0,...ys), pad=(hi-lo)*0.15||1;
+  const X = i => M.l + (i/(months.length-1))*iw;
+  const Y = v => M.t + ih - ((v-(lo-pad))/((hi+pad)-(lo-pad)))*ih;
+  const s = el("svg",{viewBox:`0 0 ${W} ${H}`, role:"img",
+    "aria-label":"마진 프록시 — 원가로 설명되지 않는 판가(회귀 잔차) 추이"});
+  [lo-pad, (lo+hi)/2, hi+pad, 0].forEach(g=>{
+    s.appendChild(el("line",{x1:M.l,x2:M.l+iw,y1:Y(g),y2:Y(g),class:g===0?"ax":"gl"}));
+    s.appendChild(Object.assign(el("text",{x:M.l-8,y:Y(g)+3.5,class:"tk","text-anchor":"end"}),
+      {textContent:g.toFixed(1)}));
+  });
+  months.forEach((m,i)=>{ if(i%6===0) s.appendChild(Object.assign(
+    el("text",{x:X(i),y:M.t+ih+16,class:"tk","text-anchor":"middle"}),{textContent:m.slice(2)}));});
+  s.appendChild(el("path",{d: pts.map((p,k)=>`${k?"L":"M"}${X(p.i).toFixed(1)},${Y(p.x).toFixed(1)}`).join(""),
+    fill:"none", stroke:cv("--s2"), "stroke-width":2, "stroke-linejoin":"round"}));
+  const last = pts[pts.length-1];
+  s.appendChild(el("circle",{cx:X(last.i),cy:Y(last.x),r:4,fill:cv("--s2"),
+    stroke:cv("--surface"),"stroke-width":2}));
+  s.appendChild(Object.assign(el("text",{x:X(last.i)-6,y:Y(last.x)-9,class:"dlab","text-anchor":"end"}),
+    {textContent:last.x.toFixed(2)+"$/kg"}));
+  mount.innerHTML=""; mount.appendChild(s);
+}
+
+function renderBattery(){
+  const v = document.getElementById("view");
+  if (!BAT){
+    v.innerHTML = `<div class="empty"><h3>2차전지·ESS — 아직 수집 전입니다</h3>
+      <p>원가(수입)·판가(수출)·장비(CAPEX)를 함께 보는 레이어입니다.</p>
+      <code>python scripts/run_watchlist.py &amp;&amp; python scripts/build_battery.py</code></div>`;
+    return;
+  }
+  const t = BAT.total, sp = BAT.spread, lead = (BAT.leadlag||[])[0];
+  const li = (BAT.costs||[]).find(c=>c.code===sp.costCode) || (BAT.costs||[])[0];
+  const pct1 = n => n==null ? "–" : (n>0?"+":"")+n+"%";
+
+  v.innerHTML = `
+    <div class="stats">
+      <div class="stat"><div class="k">체인 전체 (최근 ${BAT.window}개월)</div>
+        <div class="v">$${fm(t.usd)}M</div>
+        <div class="d">YoY <span class="${t.yoy>0?'up':'down'}">${pct1(t.yoy)}</span>
+          → 최근 ${BAT.recent}M <span class="${t.recentYoy>0?'up':'down'}">${pct1(t.recentYoy)}</span></div></div>
+      <div class="stat"><div class="k">사이클 판정</div>
+        <div class="v" style="font-size:21px">${esc(t.verdict.label)}</div>
+        <div class="d">가속 ${t.accel==null?"–":(t.accel>0?"+":"")+t.accel+"%p"}</div></div>
+      <div class="stat"><div class="k">양극재 마진 방향</div>
+        <div class="v" style="font-size:21px">${esc(sp.linked?sp.verdict.label:"판정 불가")}</div>
+        <div class="d">${sp.linked?`잔차 ${sp.e3m} → ${sp.eNow} $/kg`:"원가 연동 미확인"}</div></div>
+      <div class="stat"><div class="k">${esc(li?li.label:"리튬")} 수입단가</div>
+        <div class="v">$${li&&li.price!=null?li.price:"–"}</div>
+        <div class="d">/kg · 3개월 <span class="${li&&li.priceMom3>0?'up':'down'}">${li?pct1(li.priceMom3):"–"}</span>
+          — 오르면 양극재엔 호재(판가연동·재고평가)</div></div>
+    </div>
+
+    <p class="thesis">수출액만 보면 2차전지는 <b>판가(P) 하락을 수요 감소로 오독</b>합니다.
+      양극재 판가는 리튬 가격에 시차를 두고 연동되는 구조이고, <b>원가는 수출이 아니라
+      수입 데이터에 있습니다.</b> 우리가 쓰는 품목별 API 는 수입금액·수입중량을 함께
+      주는데 그동안 쓰지 않던 절반입니다. 이 탭은 그 절반을 붙여 <b>마진 방향</b>과
+      <b>사이클을 끌고 있는 단계</b>를 봅니다.</p>
+
+    <div class="panels">
+      <div class="panel p12">
+        <div class="phead"><h3 class="ptitle">마진 프록시 — 원가로 설명되지 않는 판가</h3>
+          <span class="unit">회귀 잔차 $/kg</span></div>
+        ${sp.linked ? `
+        <p class="pnote">양극재 수출단가 P 를 ${esc(sp.costLabel)} 수입단가 C 에 회귀했습니다:
+          <code>P(t) = α + β·C(t−${sp.lag}) + e(t)</code>.
+          <b>리튬 원단위(kg/kg)를 상수로 가정하지 않습니다</b> — 출처 없는 상수를 넣으면
+          그 가정이 결과를 만듭니다. 대신 β 가 <b>실측 전가율</b>이고, 잔차 e(t) 가
+          원가로 설명되지 않는 판가, 즉 <b>마진 프록시</b>입니다. 올라가면 마진이 벌어지는 중입니다.</p>
+        <div class="legend">
+          <span class="lg"><b>P</b> $${sp.pNow}/kg</span>
+          <span class="lg"><b>C</b> $${sp.cNow}/kg</span>
+          <span class="lg"><b>β</b> ${sp.beta}</span>
+          <span class="lg"><b>시차</b> ${sp.lag}개월</span>
+          <span class="lg"><b>수준 R²</b> ${sp.r2}</span>
+          <span class="lg"><b>차분 R²</b> ${sp.diffR2}</span>
+          <span class="lg"><b>표본</b> ${sp.n}개월</span>
+        </div>
+        <div id="bspread"></div>
+        <div class="warn" style="margin-top:12px"><b>시차 식별</b> —
+          ${sp.lagIdentified
+            ? `시차별 <b>차분</b> R² 곡선에서 ${sp.lag}개월이 뚜렷이 우세했습니다.`
+            : `시차별 차분 R² 곡선이 <b>평탄해 시차가 식별되지 않았습니다</b>
+               (${(sp.lagCurve||[]).map(c=>`${c.lag}M:${c.r2}`).join(" · ")}).
+               원가 시계열이 매끄러우면 어느 시차를 넣어도 비슷하게 맞습니다 —
+               <b>시차 값은 참고로만</b> 보세요. 잔차의 <b>방향</b>은 시차 선택에 크게
+               좌우되지 않으므로 그쪽이 더 믿을 만합니다.`}
+          <br>※ 시차는 <b>수준이 아니라 차분</b>으로 찾습니다. 수준끼리는 둘 다 추세를 갖고 있어
+          어느 시차나 R² 가 높게 나오고, 그러면 '시차 0개월'이 발견이 아니라 계산의 부산물이 됩니다.</div>
+        <div class="warn"><b>이 판정은 양극재에만 적용됩니다</b> —
+          양극재(에코프로비엠·포스코퓨처엠)는 판가 연동 + 재고평가 구조라
+          <b>리튬 상승이 호재</b>입니다. 셀 메이커(삼성SDI·LG엔솔)는 판가 연동 계약 여부에 따라
+          중립이거나 원가 압박이라 기제가 다릅니다. 둘을 한 문장으로 묶으면 안 됩니다.
+          <b>이 레이어는 셀 마진을 추정하지 않습니다.</b></div>
+        ` : `<p class="pnote">${esc(sp.note)}</p>
+        <div class="warn">리튬 수입단가와 양극재 판가의 회귀 R² 가 문턱 미만입니다.
+          연동이 확인되지 않은 상태에서 스프레드를 내면 근거 없는 마진 방향을 만드는 것이라
+          <b>숫자를 내지 않습니다</b>. 수집 기간이 쌓이면 다시 판정합니다.</div>`}
+      </div>
+
+      <div class="panel p12">
+        <div class="phead"><h3 class="ptitle">단계별 가속·턴어라운드</h3>
+          <span class="unit">${BAT.window}개월 YoY → 최근 ${BAT.recent}개월 YoY</span></div>
+        <p class="pnote"><b>'가속'과 '턴어라운드'는 다릅니다.</b> 가속은 속도가 붙은 것이고
+          턴어라운드는 부호가 바뀐 것입니다. 기저가 낮으면 가속은 얼마든지 만들어지므로
+          둘을 따로 말합니다. <b>장비는 합계에서 뺐습니다</b> — 설비투자는 수요의 흐름이
+          아니라 증설의 흐름이라, 섞으면 둘 다 흐려집니다.</p>
+        <div class="tscroll"><table class="wt"><thead><tr>
+          <th class="l">단계 · 품목</th><th>최근 ${BAT.window}M $M</th>
+          <th>${BAT.window}M YoY</th><th>최근 ${BAT.recent}M YoY</th><th>가속</th>
+          <th class="l">판정</th><th class="l">추이</th></tr></thead><tbody>
+        ${(BAT.stages||[]).map(s=>`
+          <tr style="background:var(--surface-2)">
+            <td class="l"><span class="it">${esc(BSTAGE[s.stage]||s.stage)}</span></td>
+            <td><b>${fm(s.usd)}</b></td>
+            <td class="${s.yoy>0?'up':'down'}">${pct1(s.yoy)}</td>
+            <td class="${s.recentYoy>0?'up':'down'}">${pct1(s.recentYoy)}</td>
+            <td>${s.accel==null?"–":`<span class="chip ${s.accel>0?'up':'down'}">${s.accel>0?"+":""}${s.accel}%p</span>`}</td>
+            <td class="l"><span class="vdi ${BVCLS[s.verdict.code]||''}">${esc(s.verdict.label)}</span></td>
+            <td class="l">${(s.m||[]).filter(x=>x!=null).length>3?sparkSVG(s.m.filter(x=>x!=null),"--s1"):""}</td></tr>
+          ${(s.items||[]).map(i=>`<tr>
+            <td class="l" style="padding-left:22px"><span class="tk" style="display:inline">${esc(i.code)}</span>
+              ${esc(i.label)} ${i.purity?`<span class="pu" title="코드 순도">${esc(i.purity)}</span>`:""}</td>
+            <td>${fm(i.usd)}</td>
+            <td class="${i.yoy>0?'up':'down'}">${pct1(i.yoy)}</td>
+            <td class="${i.recentYoy>0?'up':'down'}">${pct1(i.recentYoy)}</td>
+            <td>${i.accel==null?"–":`<span class="chip ${i.accel>0?'up':'down'}">${i.accel>0?"+":""}${i.accel}%p</span>`}</td>
+            <td class="l"><span class="vdi ${BVCLS[i.verdict.code]||''}">${esc(i.verdict.label)}</span></td>
+            <td class="l">${(i.m||[]).filter(x=>x!=null).length>3?sparkSVG(i.m.filter(x=>x!=null),"--s3"):""}</td></tr>`).join("")}
+        `).join("")}</tbody></table></div>
+      </div>
+
+      <div class="panel p6">
+        <div class="phead"><h3 class="ptitle">지금 끌고 있는 단계</h3>
+          <span class="unit">전월비 증감률 시차 상관</span></div>
+        <p class="pnote">장비(CAPEX) → 소재 → 완제품 순으로 물결이 지나갑니다.
+          어느 단계가 몇 개월 선행하는지를 <b>가정하지 않고 측정</b>합니다.
+          r 이 낮으면 그 경로가 지금은 작동하지 않는다는 뜻입니다.</p>
+        <table class="wt"><thead><tr><th class="l">선행 → 후행</th>
+          <th>최적 시차</th><th>상관 r</th></tr></thead><tbody>
+        ${(BAT.leadlag||[]).map(l=>`<tr>
+          <td class="l">${esc(BSTAGE[l.lead]||l.lead)} → ${esc(BSTAGE[l.lag]||l.lag)}</td>
+          <td>${l.bestK==null?"–":l.bestK+"개월"}</td>
+          <td class="${l.bestR>0.4?'up':''}">${l.bestR==null?"–":l.bestR}</td></tr>`).join("")}
+        </tbody></table>
+      </div>
+
+      <div class="panel p6">
+        <div class="phead"><h3 class="ptitle">시장별 현지화</h3>
+          <span class="unit">(부품+소재) ÷ 완제품</span></div>
+        <p class="pnote">현지화는 <b>국가 단위로</b> 일어납니다. 전체 합계만 보면
+          미국 현지화가 유럽 수출 증가에 묻힙니다.</p>
+        <div class="tscroll"><table class="wt"><thead><tr><th class="l">시장</th>
+          <th>완제품 $M</th><th>YoY</th><th>상류 $M</th><th>YoY</th>
+          <th>현지화</th><th>ESS셀 YoY</th></tr></thead><tbody>
+        ${(BAT.markets||[]).map(m=>`<tr>
+          <td class="l"><span class="it">${esc(m.market)}</span></td>
+          <td>${fm(m.final)}</td><td class="${m.finalYoy>0?'up':'down'}">${pct1(m.finalYoy)}</td>
+          <td>${fm(m.upstream)}</td><td class="${m.upstreamYoy>0?'up':'down'}">${pct1(m.upstreamYoy)}</td>
+          <td>${m.locPrev==null?"–":m.locPrev} → <b>${m.loc==null?"–":m.loc}</b></td>
+          <td class="${m.essYoy>0?'up':'down'}">${pct1(m.essYoy)}</td></tr>`).join("")}
+        </tbody></table></div>
+      </div>
+
+      <div class="panel p12">
+        <div class="phead"><h3 class="ptitle">미검증 코드 측정 — 채택 판단 근거</h3>
+          <span class="unit">합계에는 넣지 않음</span></div>
+        <p class="pnote">제안된 코드를 <b>넣기 전에 재봤습니다.</b> 이 프로젝트는 앞서
+          제시받은 HSK 20개 중 12개가 틀린 적이 있어, 실측 없이 active 로 올리지 않습니다.
+          판단 기준은 셋입니다 — <b>규모</b>(신호가 보일 만큼 큰가),
+          <b>단가</b>(품목 설명과 맞는가), <b>코팅머신과의 상관</b>(배터리 사이클과 같이 움직이는가).</p>
+        <div class="tscroll"><table class="wt"><thead><tr>
+          <th class="l">코드 · 품목</th><th>구분</th><th>${BAT.window}M $M</th><th>YoY</th>
+          <th>단가 $/kg</th><th>對미 비중</th><th>코터 상관</th><th class="l">메모</th>
+          </tr></thead><tbody>
+        ${(BAT.drafts||[]).map(d=>`<tr class="${d.seen?"":"dim"}">
+          <td class="l"><span class="tk" style="display:inline">${esc(d.code)}</span>
+            ${esc(d.label)} <span class="pu warn">미검증</span></td>
+          <td>${esc(d.side)}</td>
+          <td>${d.usd==null?"–":fm(d.usd)}</td>
+          <td class="${d.yoy>0?'up':'down'}">${pct1(d.yoy)}</td>
+          <td>${d.unitPrice==null?"–":d.unitPrice}</td>
+          <td>${d.usShare==null?"–":d.usShare+"%"}</td>
+          <td class="${d.rWithCoater>0.4?'up':''}">${d.rWithCoater==null?"–":d.rWithCoater}</td>
+          <td class="l idea" style="white-space:normal;max-width:40ch">${esc(d.note||"")}</td></tr>`).join("")}
+        </tbody></table></div>
+      </div>
+
+      <div class="panel p12">
+        <div class="phead"><h3 class="ptitle">제외한 코드</h3>
+          <span class="unit">근거를 남겨 둡니다</span></div>
+        <div class="tscroll"><table class="wt"><thead><tr>
+          <th class="l">코드</th><th class="l">왜 뺐나</th></tr></thead><tbody>
+        ${(BAT.rejected||[]).map(r=>`<tr>
+          <td class="l"><span class="it">${esc(r.code)}</span><span class="tk">${esc(r.label||"")}</span></td>
+          <td class="l idea" style="white-space:normal;max-width:78ch">${esc(r.reason||"")}</td></tr>`).join("")}
+        </tbody></table></div>
+      </div>
+    </div>
+
+    <div class="warn"><b>이 레이어의 한계</b> — ① 수입단가는 계약분·현물분이 섞인
+      <b>통관 평균단가</b>입니다. 현물 리튬 시세와 같지 않고, 선적·통관 시점만큼 밀립니다.
+      방향 지표로만 쓰세요. ② 마진 프록시는 <b>양극재 한정</b>입니다. 셀·부품·장비의
+      마진은 추정하지 않습니다. ③ 동박·알루미늄박·전해액은 이미 해외 현지생산 비중이
+      커서 한국 수출로는 기업 실적을 과소평가합니다. ④ 코드 순도가 <code>low</code> 인
+      품목은 무관한 물량이 섞이므로 절대 수준이 아니라 <b>추세</b>로만 읽으세요.</div>`;
+  if (sp.linked) drawSpread(document.getElementById("bspread"), sp, BAT.months);
 }
 
 /* ================= 밸류체인 (해외 현지생산 보정) ================= */
@@ -1204,6 +1473,7 @@ function renderWatchlist(WL){
 
 /* ================= shell ================= */
 const SCAN_KEY = "scan";
+const BAT_KEY = "battery";
 let WATCH = null;
 
 function selectTab(key){
@@ -1211,6 +1481,7 @@ function selectTab(key){
   location.hash = key;
   [...document.querySelectorAll(".tab")].forEach(b =>
     b.setAttribute("aria-selected", String(b.dataset.key === key)));
+  if (key === BAT_KEY){ renderBattery(); return; }
   if (key === SCAN_KEY){
     if (WATCH || UNI || CHAINS || FLASH) renderScan(WATCH);
     else document.getElementById("view").innerHTML =
@@ -1234,17 +1505,18 @@ function selectTab(key){
 // (초기에 manifest 로딩 실패가 스캐너까지 같이 죽이는 구조였다)
 Promise.allSettled([getJSON("data/manifest.json"), getJSON("data/watchlist.json"),
                     getJSON("data/universe.json"), getJSON("data/chains.json"),
-                    getJSON("data/flash.json")])
-  .then(([mr, wr, ur, cr, fr]) => {
+                    getJSON("data/flash.json"), getJSON("data/battery.json")])
+  .then(([mr, wr, ur, cr, fr, br]) => {
     MANIFEST = mr.status === "fulfilled" ? mr.value : {sectors: []};
     WATCH    = wr.status === "fulfilled" ? wr.value : null;
     UNI      = ur.status === "fulfilled" ? ur.value : null;
     CHAINS   = cr.status === "fulfilled" ? cr.value : null;
     FLASH    = fr.status === "fulfilled" ? fr.value : null;
+    BAT      = br.status === "fulfilled" ? br.value : null;
     if (!FLASH) scanPane = UNI ? "uni" : (WATCH ? "wl" : "chain");
     const m = MANIFEST, ready = (m.sectors||[]).filter(s=>s.ready);
 
-    if (!ready.length && !WATCH && !UNI && !CHAINS && !FLASH){
+    if (!ready.length && !WATCH && !UNI && !CHAINS && !FLASH && !BAT){
       document.getElementById("view").innerHTML = `
         <div class="empty">
           <h3>아직 데이터가 없습니다</h3>
@@ -1270,6 +1542,8 @@ Promise.allSettled([getJSON("data/manifest.json"), getJSON("data/watchlist.json"
     document.getElementById("tabs").innerHTML =
       `<button class="tab" role="tab" data-key="${SCAN_KEY}" aria-selected="false">
         전산업 스캐너<span class="tnum">${esc(nScan)}</span></button>` +
+      (BAT ? `<button class="tab" role="tab" data-key="${BAT_KEY}" aria-selected="false">
+        2차전지·ESS<span class="tnum">${esc(BAT.total.verdict.label)}</span></button>` : "") +
       (m.sectors||[]).map(s=>
       `<button class="tab" role="tab" data-key="${esc(s.key)}" aria-selected="false">
         ${esc(s.name)}${s.ready?`<span class="tnum">$${fm(s.ytd)}M</span>`
@@ -1289,12 +1563,14 @@ Promise.allSettled([getJSON("data/manifest.json"), getJSON("data/watchlist.json"
       `소급 정정 감지 ${(cov.revisions ?? 0).toLocaleString()}건`;
 
     const want = location.hash.slice(1);
-    const known = want === SCAN_KEY || (m.sectors||[]).some(s=>s.key===want);
+    const known = want === SCAN_KEY || (BAT && want === BAT_KEY)
+      || (m.sectors||[]).some(s=>s.key===want);
     selectTab(known ? want : ((WATCH||UNI||CHAINS||FLASH) ? SCAN_KEY : ready[0].key));
   });
 
 const reflow = () => {
-  if (CUR === SCAN_KEY && (WATCH||UNI||CHAINS||FLASH)) renderScan(WATCH);
+  if (CUR === BAT_KEY && BAT) renderBattery();
+  else if (CUR === SCAN_KEY && (WATCH||UNI||CHAINS||FLASH)) renderScan(WATCH);
   else if (CUR && CACHE[CUR]) renderSector(CACHE[CUR]);
 };
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", reflow);
