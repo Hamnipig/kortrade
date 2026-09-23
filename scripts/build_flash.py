@@ -157,6 +157,34 @@ def build(store: Store, cfg: F.FlashConfig) -> dict | None:
             "note": " ".join(r.note.split()),
         })
 
+    # ── 기타(잔차) — 속보 10대 품목 바깥을 보는 창 ───────────────────────
+    # 이 API 는 10대 품목만 주지만 **전체(slot00)** 도 준다. 빼면 나머지가 남는다.
+    # 반도체(전체의 48%)가 빠진 잔차라, 소비재 흐름의 앵커로는 전체보다 낫다.
+    def resid(p, s):
+        tot = get("item", "00", p, s)
+        if tot is None:
+            return None
+        parts = [get("item", f"{i:02d}", p, s) for i in range(1, 11)]
+        if any(v is None for v in parts):
+            return None          # 슬롯이 하나라도 비면 잔차가 그만큼 부풀어 오른다
+        r = tot - sum(parts)
+        return r if r > 0 else None
+
+    r_now, r_prev = resid(latest, seq), resid(py, seq)
+    r_full_prev = resid(py, 3)
+    w_now, w_prev = wd(latest, "item", "00", seq), wd(py, "item", "00", seq)
+    r_est = F.landing_wd(r_now, r_prev, r_full_prev, w_now, w_prev,
+                         F.weekdays(*ym_now, 31), F.weekdays(*ym_py, 31))
+    residual = {
+        "usd": _m(r_now), "yoy": F.pct(r_now, r_prev),
+        "share": F.share(r_now, get("item", "00", latest, seq)),
+        "est": _m(r_est), "estPrevFull": _m(r_full_prev),
+        "estYoy": F.pct(r_est, r_full_prev),
+    }
+    # ※ 잔차 자체는 **추정이 아니라 산술**이다 — 발표된 전체에서 발표된 10대를 뺀 값.
+    #   여기에 회귀를 얹어 화장품·식품을 추정하던 레이어는 제거했다 (2026-09-22).
+    #   추정치가 실측 잠정치와 같은 화면에 섞이면 화면 전체의 신뢰도가 떨어진다.
+
     # ── 속보(잠정) vs 확정 정합성 ────────────────────────────────────────
     # 같은 달을 두 경로로 받은 값이 크게 어긋나면 매핑이나 단위를 의심해야 한다.
     # universe_trade 는 97개 장 전수라 합계가 곧 전국 수출 총액이다.
@@ -198,6 +226,7 @@ def build(store: Store, cfg: F.FlashConfig) -> dict | None:
         "countryNote": cfg.country.verified_note,
         "countryCollected": "country" in kinds,
         "ratios": ratios,
+        "residual": residual,
         "months": months[-HIST:],
         "reconcile": rec,
     }
@@ -267,6 +296,9 @@ def main() -> int:
               f"  착지 ${str(r['est']):>9}M ({r['estYoy']}%)")
     for r in payload["ratios"]:
         print(f"  {r['name']}: {r['prev']} → {r['now']} ({r['chgPct']}%)")
+    rs = payload["residual"]
+    print(f"  기타(잔차) — 10대 품목 밖: ${rs['usd']}M · 전체의 {rs['share']}% · "
+          f"누계YoY {rs['yoy']}% · 착지 ${rs['est']}M ({rs['estYoy']}%)")
     rec = payload["reconcile"]
     if rec:
         mark = "OK" if rec["ok"] else "★괴리"

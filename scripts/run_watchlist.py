@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from kortrade import battery as BAT
 from kortrade import chains as C
 from kortrade import watchlist as W
 from kortrade.client import CustomsClient, chunk_periods
@@ -62,8 +63,19 @@ def main() -> int:
             print("  -", e)
         return 1
 
+    # 2차전지 심화 레이어. **수입 코드가 섞여 있다** — 품목별 API 는 수출입을 같이
+    # 주므로 같은 호출로 해결되지만, 전국 합계(collect_sector_total)를 반드시 태워야
+    # imp_usd/imp_wgt 가 들어온다. 마진 프록시가 그 절반 위에 서 있다.
+    bt = BAT.load()
+    berrs = bt.validate()
+    if berrs:
+        print("배터리 설정 오류:")
+        for e in berrs:
+            print("  -", e)
+        return 1
+
     end = args.end or latest_available_yymm()
-    parents = sorted(set(wl.all_parents()) | set(cs.all_parents()))
+    parents = sorted(set(wl.all_parents()) | set(cs.all_parents()) | set(bt.all_parents()))
     nw = len(list(chunk_periods(args.start, end, 12)))
 
     # (6단위, 국가) 조합 — 품목마다 필요한 국가가 다르므로 전조합을 돌지 않는다
@@ -73,10 +85,17 @@ def main() -> int:
         for code in ch.codes():
             for mkt in ch.markets:
                 pairs.add((code[:6], mkt))
+    # 배터리 레이어도 시장별 분해가 필요하다 (현지화는 국가 단위로 일어난다)
+    for code in bt.all_codes():
+        for mkt in bt.markets:
+            pairs.add((code[:6], mkt))
     pairs = sorted(pairs)
 
     print(f"수집 구간   : {args.start} ~ {end}  (창 {nw}개)")
     print(f"체인        : {len(cs.chains)}개 ({', '.join(c.name for c in cs.chains)})")
+    print(f"배터리      : 코드 {len(bt.all_codes())}개 "
+          f"(active {len(bt.all_codes()) - len(bt.drafts())} / draft {len(bt.drafts())})"
+          f"  ※ 수입 {len(bt.cost)}개 포함")
     print(f"품목        : active {len(wl.active())} / 전체 {len(wl.items)}"
           f"  (draft {[i.key for i in wl.items if not i.active]})")
     print(f"전국 합계   : HS6 {len(parents)}개            → {len(parents) * nw:,}콜")
@@ -102,10 +121,12 @@ def main() -> int:
             by_parent: dict[str, list[str]] = {}
             for p, c in pairs:
                 by_parent.setdefault(p, []).append(c)
-            for p, cs in sorted(by_parent.items()):
-                st = col.collect_sector([p], {c: wl.countries.get(c, c) for c in cs},
+            # ※ 변수명에 주의 — cs 는 위에서 Chains 객체다. 덮어쓰면 안 된다.
+            for parent, ccs in sorted(by_parent.items()):
+                st = col.collect_sector([parent],
+                                        {c: wl.countries.get(c, c) for c in ccs},
                                         args.start, end)
-                log.info("  %s (%d개국): %s", p, len(cs), st)
+                log.info("  %s (%d개국): %s", parent, len(ccs), st)
 
         print(f"\n  API 호출 {client.calls_made}회 사용")
         cov = store.coverage()
