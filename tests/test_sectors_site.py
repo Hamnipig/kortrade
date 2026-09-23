@@ -122,6 +122,69 @@ def test_build_site_payload():
               f"(${tot:,.0f}M), 비중 합 {shares:.1f}%")
 
 
+def test_pinned_places_and_hidden_unready_tabs():
+    """(1) 미수집 섹터는 탭을 내지 않는다. (2) 생산 거점은 순위와 무관하게 표시한다.
+
+    배경 (2026-09-23 실측, site/data/cosmetics.json):
+      기초(330499) 상위 8개 시군구가 전부 브랜드사 본사·물류 거점이었다 —
+      강남구 $1,443M · 인천 제물포구 $930M · 송파구 $565M · 김포시 $387M …
+      상위 8개 합은 카테고리($7,344M)의 **58%** 뿐이고, 기초 ODM 핵심 생산지로
+      알려진 세종(한국콜마)·음성(코스메카)은 **어느 카테고리에도 없었다.**
+      화성은 색조(입술·눈화장)에서는 1위인데 기초에서는 8위 밖이다.
+
+      → 순위 컷오프 때문인지, 애초에 그 지역으로 안 잡히는지 **구분이 안 됐다.**
+        고정 표시를 하면 실제 값이 찍히므로 그 질문이 데이터로 답해진다.
+    """
+    from kortrade.sectors import get_sector
+    cos = get_sector("cosmetics")
+    pins = {p["match"] for p in cos.pinned_places}
+    assert {"화성", "세종", "음성"} <= pins, f"핵심 ODM 거점이 고정 목록에 없다: {pins}"
+    assert all(p.get("why") for p in cos.pinned_places), "왜 보는지가 없으면 나중에 못 읽는다"
+
+    with tempfile.TemporaryDirectory() as td:
+        db, out = Path(td) / "t.sqlite", Path(td) / "data"
+        _seed(db)                      # 시드에는 화성시가 있고 세종·음성은 없다
+        r = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "build_site.py"),
+             "--db", str(db), "--out", str(out)],
+            capture_output=True, text=True, cwd=ROOT)
+        assert r.returncode == 0, r.stdout + r.stderr
+        d = json.loads((out / "cosmetics.json").read_text(encoding="utf-8"))
+        cat = next(c for c in d["cats"] if c["hs"] == "330499")
+        by = {q["match"]: q for q in cat["pinned"]}
+        assert set(by) == pins, by.keys()
+
+        # 있는 지역은 값이 찍혀야 한다
+        hwa = by["화성"]
+        assert hwa["ytd"] and hwa["ytd"] > 0 and hwa["places"], hwa
+        assert hwa["share"] is not None
+
+        # 없는 지역은 '데이터 없음'으로 구분돼야 한다 — 0 과 미집계는 다른 말이다
+        for k in ("세종", "음성"):
+            assert by[k]["ytd"] is None and not by[k]["places"], (k, by[k])
+            assert by[k]["rank"] is None
+
+        # 상위 표가 카테고리의 몇 %를 설명하는지 — 이것이 '안 보이는 42%'의 근거다
+        assert cat["placesCoverage"] is not None and 0 < cat["placesCoverage"] <= 100.5
+        assert cat["placesTotal"] >= len(cat["places"])
+
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    assert 'filter(s=>s.ready)' in html, "미수집 섹터 탭이 여전히 렌더된다"
+    assert "미수집</span>" not in html, "탭에 미수집 딱지가 남아 있다"
+    # 화면의 상설 패널은 뺐다 (2026-09-23 사용자 판단). 데이터는 계속 만들고,
+    # 확인은 scripts/dump_places.py 가 **전 시군구**를 컷 없이 로그로 찍어 대신한다.
+    # 6개 지역만 고정해 봐야 기초의 '안 보이는 42%' 는 그대로 남기 때문이다.
+    assert "pinHost.innerHTML" not in html, "고정 표시 패널이 화면에 되살아났다"
+    assert "dump_places.py" in html, "대신 무엇을 보면 되는지가 코드에 안 적혀 있다"
+    assert (ROOT / "scripts" / "dump_places.py").exists(), \
+        "고정 표시를 화면에서 뺐으면 전 시군구 덤프가 그 자리를 대신해야 한다"
+    # 귀속 기준 정정 (2026-09-23) — 자세한 검증은 tests/test_pq.py 에 있다.
+    # 제도상 기준은 '제조자 사업장'이고, 어긋나는 원인은 **자기신고 품질**이다.
+    assert "제조자 사업장" in html, "지역 귀속 기준이 정정되지 않았다"
+    assert "수출 주체의 출하" in html, "이 표를 어떻게 읽어야 하는지가 없다"
+    print("  ✓ 미수집 탭 숨김 · 생산 거점 고정 표시 (있음/없음 구분)")
+
+
 def test_site_html_contract():
     """사이트 HTML 이 빌드 산출물과 같은 파일명을 보고 있는지."""
     html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
@@ -137,7 +200,13 @@ def test_site_html_contract():
     assert "secrets.DATA_GO_KR_SERVICE_KEY" in wf
     assert "DATA_GO_KR_SERVICE_KEY:" in wf and "3028661a" not in wf, "인증키가 하드코딩되면 안 된다"
     assert "--sectors all" in wf and "build_site.py" in wf
-    print("  ✓ 사이트/워크플로 계약 (키 하드코딩 없음)")
+    # ★ 단가(P/Q)는 전적으로 **국가별 수집**에 달려 있다. --sectors 모드는 시군구
+    #   API 만 쓰는데 그 응답에는 중량 필드가 없어서 단가를 낼 수 없다.
+    #   이 단계가 빠지면 단가·확산도 패널이 통째로 빈다 (한 번 실제로 빠져 있었다).
+    assert "--layer sector" in wf, \
+        "섹터 국가별 수집이 워크플로에 없다 — 단가·확산도 패널이 영원히 빈다"
+    assert "dump_places.py" in wf, "시군구 전체 덤프 진단이 자동화에 빠졌다"
+    print("  ✓ 사이트/워크플로 계약 (키 하드코딩 없음 · 국가별 수집 연결)")
 
 
 
