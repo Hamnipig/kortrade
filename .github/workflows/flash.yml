@@ -9,7 +9,7 @@ name: Update flash (10-day)
 #   첫 실행이 잡 한도(25분)를 넘겨 통째로 취소됐고, 그러면 **어느 단계가
 #   시간을 먹었는지 로그에 남지 않는다.** 단계별로 끊어 두면 범인이 이름으로
 #   찍히고, 뒤 단계는 계속 돈다. 단계 합계가 잡 한도보다 작아야 한다
-#   (5+3+8+6+3+3=28 < 35). tests/test_flash.py 가 이 관계를 고정한다.
+#   (5+2+3+8+6+3+3=30 < 35). tests/test_flash.py 가 이 관계를 고정한다.
 on:
   schedule:
     - cron: "0 3 1,11,21 * *"    # 12:00 KST
@@ -41,7 +41,7 @@ concurrency:
 jobs:
   flash:
     runs-on: ubuntu-latest
-    # 단계 타임아웃 합계(28분) + checkout/setup(타임아웃 없는 단계) 보다 넉넉히 위.
+    # 단계 타임아웃 합계(30분) + checkout/setup(타임아웃 없는 단계) 보다 넉넉히 위.
     # 잡 한도가 단계 합계보다 낮으면 잡이 먼저 죽어서 범인이 안 찍힌다.
     timeout-minutes: 35
     steps:
@@ -55,6 +55,14 @@ jobs:
       - name: 의존성 설치
         timeout-minutes: 5
         run: pip install -r requirements.txt
+
+      # ★ 수집을 시작하기 전에 **파일이 다 올라왔는지** 먼저 본다.
+      #   zip 으로 갱신하는 구조라 파일 하나를 빼먹기 쉽고, 그러면 수집 한복판에서
+      #   ImportError 로 죽는다(실측: battery.py 만 올리고 flash.py 를 빼먹어
+      #   'cannot import name ols' 로 멈췄다). 1초짜리 점검으로 먼저 걸러낸다.
+      - name: 배포 정합성 점검
+        timeout-minutes: 2
+        run: python scripts/selfcheck.py
 
       # 속보 워크플로는 속보 API 2개만 있으면 된다. 시군구 API 상태 때문에 멈출 이유가 없다.
       - name: 인증키 확인
