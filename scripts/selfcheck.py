@@ -31,7 +31,8 @@ MODULES = [
     "kortrade.stats", "kortrade.client", "kortrade.store", "kortrade.collect",
     "kortrade.codes", "kortrade.regions", "kortrade.sectors", "kortrade.analyze",
     "kortrade.watchlist", "kortrade.chains", "kortrade.flash", "kortrade.battery",
-    "kortrade.kpi", "kortrade.discover",
+    "kortrade.kpi", "kortrade.discover", "kortrade.localization",
+    "kortrade.pq", "kortrade.breadth",
 ]
 
 # 설정은 '읽히는 것'만으로 부족하다 — validate() 까지 통과해야 수집이 의미를 갖는다.
@@ -47,7 +48,7 @@ SCRIPTS = [
     "run_update", "run_watchlist", "run_universe", "run_flash",
     "build_site", "build_watchlist", "build_universe", "build_chains",
     "build_flash", "build_battery", "verify_flash", "inspect_flash",
-    "bootstrap_codes", "check_key",
+    "bootstrap_codes", "check_key", "dump_places",
 ]
 
 
