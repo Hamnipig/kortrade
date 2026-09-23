@@ -131,6 +131,7 @@ jobs:
           python scripts/build_watchlist.py || echo "워치리스트 건너뜀"
           python scripts/build_universe.py  || echo "유니버스 건너뜀"
           python scripts/build_chains.py    || echo "밸류체인 건너뜀"
+          python scripts/build_battery.py   || echo "2차전지 건너뜀"
 
       - name: 변경분 커밋
         if: always()
