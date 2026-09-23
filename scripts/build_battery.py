@@ -207,32 +207,65 @@ def build(store: Store, cfg: B.BatteryConfig) -> dict | None:
                         "bestK": None if not top else top["k"],
                         "bestR": None if not top else top["r"]})
 
-    # ── 4. 시장별 (현지화는 국가 단위로 일어난다) ────────────────────────
+    # ── 4. 시장별 현지화 — 밸류체인 레이어를 이 탭으로 흡수했다 ──────────
+    # 완제품 수출이 줄었을 때 **수요가 줄었나 생산지가 옮겨갔나**를 갈라내는 판정.
+    # 실측(對미): 완제품 +2% / 부품·소재 +29% / 체인 +13%, 현지화지수 0.35~0.92 →
+    # 1.83. ESS셀 −13% 만 보고 수요 위축으로 읽으면 정반대 결론이 나온다.
+    #
+    # ★ 현지화지수는 **최근 3개월 기준**을 쓴다. 8개월 평균은 전환 초기를 뭉갠다 —
+    #   실측에서 8개월 기준은 0.67→0.84(1.25배)로 문턱을 못 넘었지만
+    #   3개월 기준은 0.70→1.56(2.2배)로 명확히 잡혔다.
+    fin_c = cfg.stage_codes("final", True)
+    up_c = cfg.stage_codes("component", True) + cfg.stage_codes("material", True)
+    eq_c = cfg.stage_codes("equipment", True)
     mkts = []
-    for mk in cfg.markets:
+    for mk in ["ALL"] + list(cfg.markets):
         sub = df[df["country_code"] == mk]
         if sub.empty:
             continue
-        fin = cfg.stage_codes("final", True)
-        up = cfg.stage_codes("component", True) + cfg.stage_codes("material", True)
-        eq = cfg.stage_codes("equipment", True)
-        f_n, f_p = agg(sub, fin, cur, "eu"), agg(sub, fin, prev, "eu")
-        u_n, u_p = agg(sub, up, cur, "eu"), agg(sub, up, prev, "eu")
-        e_n, e_p = agg(sub, eq, cur, "eu"), agg(sub, eq, prev, "eu")
+        f_n, f_p = agg(sub, fin_c, cur, "eu"), agg(sub, fin_c, prev, "eu")
+        u_n, u_p = agg(sub, up_c, cur, "eu"), agg(sub, up_c, prev, "eu")
+        e_n, e_p = agg(sub, eq_c, cur, "eu"), agg(sub, eq_c, prev, "eu")
         if f_n + u_n < 5_000_000:
             continue
-        ess = agg(sub, ["8507603000"], cur, "eu")
-        ess_p = agg(sub, ["8507603000"], prev, "eu")
+        f3, f3p = agg(sub, fin_c, q3, "eu"), agg(sub, fin_c, q3p, "eu")
+        u3, u3p = agg(sub, up_c, q3, "eu"), agg(sub, up_c, q3p, "eu")
+        t_n, t_p = f_n + u_n, f_p + u_p
+        f_yoy = W.pct(f_n, f_p, W.MIN_BASE_USD)
+        t_yoy = W.pct(t_n, t_p, W.MIN_BASE_USD)
+        loc_q3 = B.localization(f3, u3)
+        loc_q3p = B.localization(f3p, u3p)
+
+        # 완제품 **품목별** 판정. 체인 합계는 성장이어도 특정 품목만 줄어드는 경우가
+        # 있다(실측: ESS셀 −13% / 체인 +13%). 워치리스트 배지가 이 판정을 쓴다.
+        finals = []
+        for c in cfg.stages.get("final", []):
+            if not c.active:
+                continue
+            a_, b_ = agg(sub, [c.code], cur, "eu"), agg(sub, [c.code], prev, "eu")
+            fy = W.pct(a_, b_, W.MIN_BASE_USD)
+            finals.append({"code": c.code, "label": c.label, "usd": _m(a_), "yoy": fy,
+                           "verdict": B.loc_verdict(fy, t_yoy, loc_q3, loc_q3p)})
+
+        g_f = sub[sub["hs_code"].isin(fin_c)].groupby("period")["eu"].sum()
+        g_u = sub[sub["hs_code"].isin(up_c)].groupby("period")["eu"].sum()
+        mloc = []
+        for p in months:
+            fv, uv = float(g_f.get(p, 0.0)), float(g_u.get(p, 0.0))
+            mloc.append(round(uv / fv, 2) if fv > 0 else None)
+
         mkts.append({
             "market": mk,
-            "final": _m(f_n), "finalYoy": W.pct(f_n, f_p, W.MIN_BASE_USD),
+            "final": _m(f_n), "finalYoy": f_yoy,
             "upstream": _m(u_n), "upstreamYoy": W.pct(u_n, u_p, W.MIN_BASE_USD),
             "equip": _m(e_n), "equipYoy": W.pct(e_n, e_p, W.MIN_BASE_USD),
-            "loc": _r(u_n / f_n, 2) if f_n > 0 else None,
-            "locPrev": _r(u_p / f_p, 2) if f_p > 0 else None,
-            "ess": _m(ess), "essYoy": W.pct(ess, ess_p, W.MIN_BASE_USD),
+            "total": _m(t_n), "totalYoy": t_yoy,
+            "loc": B.localization(f_n, u_n), "locPrev": B.localization(f_p, u_p),
+            "locQ3": loc_q3, "locQ3Prev": loc_q3p,
+            "verdict": B.loc_verdict(f_yoy, t_yoy, loc_q3, loc_q3p),
+            "finals": finals, "mLoc": mloc,
         })
-    mkts.sort(key=lambda r: -(r["final"] or 0))
+    mkts.sort(key=lambda r: (r["market"] != "ALL", -(r["total"] or 0)))
 
     # ── 5. draft 코드 측정 — 채택할지 말지의 근거를 숫자로 ────────────────
     anchor = nat[nat["hs_code"] == "8479899050"].groupby("period")["eu"].sum()
@@ -313,6 +346,12 @@ def main() -> int:
         print(f"     잔차 {sp['e3m']} → {sp['eNow']} $/kg  [{sp['verdict']['label']}]")
     else:
         print(f"  마진 프록시 — {sp['note']}")
+    for m in payload["markets"]:
+        print(f"  현지화 {m['market']:<4} 완제품 {m['finalYoy']}% / 체인 {m['totalYoy']}% / "
+              f"현지화(3M) {m['locQ3Prev']}→{m['locQ3']} [{m['verdict']['label']}]")
+        for fi in m["finals"]:
+            if fi["verdict"]["code"] in ("localizing", "mixed"):
+                print(f"       └ {fi['label']} {fi['yoy']}% → [{fi['verdict']['label']}]")
     for ll in payload["leadlag"]:
         print(f"  선후행 {ll['lead']}→{ll['lag']}: 최적 시차 {ll['bestK']}개월 r={ll['bestR']}")
     print("  draft 코드 측정:")
