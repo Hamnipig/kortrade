@@ -29,6 +29,7 @@ import yaml
 # ★ 레이어는 다른 레이어를 import 하지 않는다. 공용 통계는 stats 에서 가져온다.
 #   (전에 flash.py 에서 가져오다가, battery.py 만 배포하고 flash.py 를 빼먹어
 #    ImportError 로 수집이 통째로 멈춘 적이 있다.)
+from .localization import localization, verdict as loc_verdict
 from .stats import corr, ols, predict   # noqa: F401
 
 CONFIG = Path(__file__).resolve().parent.parent / "config" / "battery.yaml"
