@@ -125,6 +125,7 @@ jobs:
           python scripts/build_watchlist.py
           python scripts/build_universe.py
           python scripts/build_chains.py
+          python scripts/build_battery.py
           python scripts/build_flash.py || echo "속보 건너뜀 (수집 실패)"
 
       # DB 가 GitHub 파일 한도(100MB)에 가까워지면 조용히 push 가 깨진다. 미리 경고한다.
