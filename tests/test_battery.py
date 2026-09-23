@@ -237,6 +237,47 @@ def test_end_to_end_build():
           f"단계 {len(p['stages'])}개, draft {len(p['drafts'])}개 분리")
 
 
+def test_no_cross_layer_imports():
+    """레이어는 다른 레이어를 import 하지 않는다.
+
+    회귀: battery.py 가 flash.py 에서 ols 를 가져오던 구조라, battery.py 만
+    배포하고 flash.py 를 빼먹자 수집이 통째로 멈췄다
+    (`ImportError: cannot import name 'ols' from 'kortrade.flash'`).
+    공용 코드는 kortrade/stats.py 한 자리에 둔다.
+    """
+    from kortrade import stats as S
+    layers = ("flash", "battery", "chains", "watchlist")
+    for a_ in layers:
+        src = (ROOT / "kortrade" / f"{a_}.py").read_text(encoding="utf-8")
+        for b_ in layers:
+            if a_ == b_:
+                continue
+            assert f"from .{b_} import" not in src, \
+                f"{a_}.py 가 {b_}.py 를 import 한다 — 배포 누락 사고의 원인이다"
+    # 공용 통계는 한 자리에만 있어야 한다
+    assert B.ols is S.ols and B.predict is S.predict and B.corr is S.corr
+    assert (ROOT / "kortrade" / "stats.py").exists()
+    bsrc = (ROOT / "kortrade" / "battery.py").read_text(encoding="utf-8")
+    assert "def ols(" not in bsrc and "def corr(" not in bsrc, \
+        "battery.py 가 통계 함수를 다시 정의하고 있다 — 정의가 갈린다"
+
+    # 배포 정합성 점검이 있고, 수집 전에 돌아야 한다
+    sc = ROOT / "scripts" / "selfcheck.py"
+    assert sc.exists(), "배포 정합성 점검 스크립트가 없다"
+    import yaml
+    for wf in (".github/workflows/update.yml", ".github/workflows/flash.yml"):
+        d = yaml.safe_load((ROOT / wf).read_text(encoding="utf-8"))
+        steps = list(d["jobs"].values())[0]["steps"]
+        idx = [i for i, st in enumerate(steps) if "selfcheck.py" in str(st.get("run", ""))]
+        assert idx, f"{wf} 에 정합성 점검 단계가 없다"
+        first_api = min((i for i, st in enumerate(steps)
+                         if "DATA_GO_KR_SERVICE_KEY" in str(st.get("env", {}))),
+                        default=len(steps))
+        assert idx[0] < first_api, \
+            f"{wf} 의 정합성 점검이 API 호출 단계보다 뒤에 있다 — 먼저 걸러야 한다"
+    print("  ✓ 레이어 간 import 없음 · 공용 통계 단일 출처 · 수집 전 정합성 점검")
+
+
 def test_wired_into_site_and_automation():
     """자동 갱신과 화면에 붙어 있어야 한다."""
     html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
