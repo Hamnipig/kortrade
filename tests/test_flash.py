@@ -390,6 +390,60 @@ def test_client_honors_time_budget():
     print("  ✓ 시간 예산 — 소진 시 호출 없이 중단, 프로브로 응답 속도 선측정")
 
 
+def test_nowcast_removed_residual_is_arithmetic_only():
+    """화장품·식품 추정(나우캐스트)은 제거됐다. 잔차만 남긴다.
+
+    결정(2026-09-22): 추정 오차가 실측 잠정치와 같은 화면에 섞이면 화면 전체를
+    의심하게 된다. HSK 10단위 순 단위 실측은 TRASS 유료 경로뿐이고, 무료로는
+    근사할 수 없다는 결론. 속보 레이어는 **관세청이 발표한 것만** 다룬다.
+
+    잔차(전체 − 10대 합계)는 남긴다 — 추정이 아니라 **산술**이고, 출처가 10대 품목
+    표와 같기 때문이다.
+    """
+    import calendar
+    cfg = F.load()
+    assert cfg.nowcast.items == [], "나우캐스트 품목이 아직 설정에 남아 있다"
+
+    build = (ROOT / "scripts" / "build_flash.py").read_text(encoding="utf-8")
+    assert "F.ols(" not in build and "F.predict(" not in build, \
+        "빌드가 아직 회귀 추정을 하고 있다"
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    assert "flashNowcast" not in html, "화면에 나우캐스트 패널이 남아 있다"
+    assert "flashResidual" in html, "잔차 패널이 없다"
+    assert "TRASS" in html, "왜 못 쪼개는지에 대한 안내가 없다"
+
+    # 잔차는 계속 계산돼야 한다 — 산술이므로
+    tmp = Path(tempfile.mkdtemp())
+    db = tmp / "t.sqlite"
+    rows = []
+    for y in (2025, 2026):
+        for m in range(1, 13):
+            if (y, m) > (2026, 9):
+                continue
+            last = calendar.monthrange(y, m)[1]
+            g = 1.0 if y == 2025 else 1.2
+            slots = {"00": 100e9 * g}
+            for i in range(1, 11):
+                slots[f"{i:02d}"] = 7.5e9 * g          # 10대 합 75 → 잔차 25
+            for seq, dd, fr in ((1, 10, .33), (2, 20, .65), (3, last, 1.0)):
+                if (y, m) == (2026, 9) and seq > 1:
+                    continue
+                for s_, v in slots.items():
+                    rows.append({"period": f"{y}-{m:02d}", "seq": seq, "kind": "item",
+                                 "slot": s_, "dt": f"01~{dd:02d}", "day_to": dd,
+                                 "exp_usd": int(v * fr)})
+    with Store(db) as st:
+        st.upsert_flash(rows)
+    r = subprocess.run([sys.executable, str(ROOT / "scripts" / "build_flash.py"),
+                        "--db", str(db), "--out", str(tmp / "d"),
+                        "--verify", str(tmp / "none.json")], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    p = json.loads((tmp / "d" / "flash.json").read_text(encoding="utf-8"))
+    assert "nowcasts" not in p, "페이로드에 나우캐스트가 남아 있다"
+    assert abs(p["residual"]["share"] - 25.0) < 0.5, p["residual"]
+    print(f"  ✓ 나우캐스트 제거 — 잔차 {p['residual']['share']}%(산술)만 유지")
+
+
 def test_wired_into_automation():
     """자동 갱신에 붙어 있어야 한다. 붙지 않은 레이어는 다음 달이면 죽은 데이터가 된다."""
     fl = (ROOT / ".github" / "workflows" / "flash.yml").read_text(encoding="utf-8")
