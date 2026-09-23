@@ -175,6 +175,14 @@ def test_pinned_places_and_hidden_unready_tabs():
     # 확인은 scripts/dump_places.py 가 **전 시군구**를 컷 없이 로그로 찍어 대신한다.
     # 6개 지역만 고정해 봐야 기초의 '안 보이는 42%' 는 그대로 남기 때문이다.
     assert "pinHost.innerHTML" not in html, "고정 표시 패널이 화면에 되살아났다"
+    # ── 첫 화면 순서 (2026-09-23) ─────────────────────────────────────
+    # 탭을 누르자마자 보여야 하는 것은 로테이션 3종(맵 · 지배 vs 그 외 · 월별 추이)이다.
+    # 단가·확산도 블록은 그 아래에서 '그래서 그 성장이 어떤 성장인가' 를 답한다.
+    order = [html.index(k) for k in
+             ("로테이션 맵", "카테고리별 월별 추이", 'id="nation"',
+              "카테고리별 상위 수출 시군구")]
+    assert order == sorted(order), \
+        f"첫 화면 패널 순서가 바뀌었다 (로테이션 3종 → 단가·확산도 → 시군구): {order}"
     assert "dump_places.py" in html, "대신 무엇을 보면 되는지가 코드에 안 적혀 있다"
     assert (ROOT / "scripts" / "dump_places.py").exists(), \
         "고정 표시를 화면에서 뺐으면 전 시군구 덤프가 그 자리를 대신해야 한다"
