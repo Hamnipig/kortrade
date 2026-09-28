@@ -62,7 +62,8 @@ class DemandConfig:
     cap_enabled: bool = True
     routes: list[str] = field(default_factory=list)
     facet_candidates: list[str] = field(default_factory=list)
-    match: str = "batter"
+    match_any: list[str] = field(default_factory=lambda: ["batter", "storage"])
+    match_codes: list[str] = field(default_factory=lambda: ["MWH"])
     status_filter: list[str] = field(default_factory=list)
     flat_pct: float = 5.0
     share_pp: float = 3.0
@@ -84,6 +85,8 @@ class DemandConfig:
             errs.append(f"partner '{self.partner}': Census CTY_CODE 는 4자리")
         if self.cap_enabled and not self.routes:
             errs.append("us_capacity.routes 가 비어 있음")
+        if self.cap_enabled and not (self.match_any or self.match_codes):
+            errs.append("us_capacity: 배터리를 찾을 단서(match_any/match_codes)가 없음")
         return errs
 
 
@@ -106,7 +109,9 @@ def load(path: Path | None = None) -> DemandConfig:
         cap_enabled=bool(cap.get("enabled", True)),
         routes=[str(r) for r in (cap.get("routes") or [])],
         facet_candidates=[str(f) for f in (cap.get("facet_candidates") or [])],
-        match=str(cap.get("match", "batter")),
+        match_any=[str(x).lower() for x in (cap.get("match_any")
+                                            or [cap.get("match", "batter")])],
+        match_codes=[str(x).upper() for x in (cap.get("match_codes") or ["MWH"])],
         status_filter=[str(s) for s in (cap.get("status_filter") or [])],
         flat_pct=float(th.get("flat_pct", 5.0)),
         share_pp=float(th.get("share_pp", 3.0)),
