@@ -164,6 +164,16 @@ def attribute(kr_yoy: float | None, imp_yoy: float | None,
                         "대체하는 국면입니다. 한국 기업의 현지 공장 가동 여부는 "
                         "통관 데이터에 없으므로 공시로 확인해야 합니다."}
 
+    # ── 설치 축만 있는 경우 — 말할 수 있는 데까지만 말한다
+    # (Census 키는 2026-05-12 부터 필수가 됐고 발급 메일이 늦는 일이 있다.
+    #  EIA 키만 먼저 들어와도 '수요 위축은 아니다'까지는 확정할 수 있다.)
+    if i is None and c is not None and c > 0:
+        return {"code": "demand_ok_partial", "label": "수요 견조 · 원인 구분 불가",
+                "shareChg": d_share,
+                "note": "미국 설치는 늘고 있습니다 — **수요 위축은 아닙니다.** 다만 한국 수출 "
+                        "감소가 현지 생산 전환인지 점유율 상실인지는 미국 수입 데이터 없이 "
+                        "구분할 수 없습니다. CENSUS_API_KEY 를 넣으면 갈라집니다."}
+
     # ── 수요 자체가 식은 경우
     if (c is not None and c < 0) and (i is None or i <= 0):
         return {"code": "demand_down", "label": "수요 위축", "shareChg": d_share,
