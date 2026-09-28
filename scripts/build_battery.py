@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from kortrade import battery as B
+from kortrade import demand as DM
 from kortrade import flash as F
 from kortrade import watchlist as W
 from kortrade.store import Store
@@ -41,6 +42,104 @@ def _m(v):
 
 def _r(v, n=2):
     return None if v is None else round(v, n)
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 최종 수요 축 — 한국 수출이 줄었을 때 **무슨 일이 일어난 것인지**
+#
+# 현지화지수는 (a)수요 위축 과 (b)생산지 이동 을 부분적으로 가른다. 그런데
+# **(c)점유율 상실은 한국 수출 데이터만으로는 원리적으로 볼 수 없다** —
+# 한국 수출만 보고 있으면 미국 시장이 두 배가 됐는지 반토막 났는지 알 방법이 없다.
+# (b)와 (c)는 투자 판단이 정반대라서 이 구분이 중요하다.
+#
+# ★ 세 축(한국 수출 달러 / 미국 수입 달러 / 미국 설치 MW)을 **합치지 않는다.**
+#   단위도 출처도 갱신주기도 다르다. 지수화해서 방향만 나란히 놓는다.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def build_demand(store, df, cfg, months, cur, prev, q3) -> dict:
+    try:
+        dc = DM.load()
+    except Exception:                                    # noqa: BLE001
+        return {"ok": False, "note": "config/demand.yaml 을 읽지 못했습니다."}
+
+    verify = {}
+    vf = ROOT / "data" / "demand_verify.json"
+    if vf.exists():
+        try:
+            verify = json.loads(vf.read_text(encoding="utf-8"))
+        except Exception:                                # noqa: BLE001
+            verify = {}
+
+    census = store.demand("census")
+    eia = store.demand("eia")
+
+    def win(series: dict, ps) -> float | None:
+        vals = [series.get(p) for p in ps if series.get(p) is not None]
+        return sum(vals) if vals else None
+
+    def yoy(series, c, p):
+        a, b = win(series, c), win(series, p)
+        return None if (a is None or not b or b < dc.min_base_usd) else round((a / b - 1) * 100, 1)
+
+    # 한국 관세청: 對미 ESS 완제품(8507603000). 미국 수입과 **같은 물건이 아니다** —
+    # 한국은 셀/팩, 미국 8507600030 은 외함 수납 시스템이다. 방향 대조용이다.
+    ess = [c.code for c in cfg.stages.get("final", []) if c.active and c.code == "8507603000"]
+    us = df[(df["country_code"] == "US") & (df["hs_code"].isin(ess))]
+    kr_ser = {p: float(v) for p, v in us.groupby("period")["eu"].sum().items()} if not us.empty else {}
+
+    # 미국 수입 — 설명 대조를 통과한 코드를 우선 쓴다. 기계가 확인한 것만 쓴다.
+    codes = (verify.get("census") or {}).get("codes") or {}
+    ranked = sorted((c.code for c in dc.codes),
+                    key=lambda k: (not (codes.get(k) or {}).get("matched"),
+                                   not (codes.get(k) or {}).get("seen")))
+    pick = next((k for k in ranked if f"{k}:ALL" in census), None)
+    imp_all = census.get(f"{pick}:ALL", {}) if pick else {}
+    imp_kr = census.get(f"{pick}:KR", {}) if pick else {}
+    cap = eia.get("capacity", {})
+
+    s_now = DM.share(win(imp_kr, cur), win(imp_all, cur), dc.min_base_usd)
+    s_prev = DM.share(win(imp_kr, prev), win(imp_all, prev), dc.min_base_usd)
+    kr_yoy = yoy(kr_ser, cur, prev)
+    imp_yoy = yoy(imp_all, cur, prev)
+    cap_now, cap_prev = win(cap, cur[-1:]), win(cap, prev[-1:])
+    cap_yoy = (None if (cap_now is None or not cap_prev)
+               else round((cap_now / cap_prev - 1) * 100, 1))
+
+    have = bool(imp_all) or bool(cap)
+    ser = lambda d: [None if d.get(p) is None else round(d[p], 1) for p in months]
+    return {
+        "ok": have,
+        "note": ("" if have else
+                 "미국 수입·설치 데이터가 아직 없습니다. scripts/run_demand.py 가 "
+                 "키를 못 찾았거나 아직 실행되지 않았습니다."),
+        "asOf": months[-1], "window": cfg.window, "months": months,
+        "picked": pick,
+        "kr": {"usd": _m(win(kr_ser, cur)), "yoy": kr_yoy, "m": [_m(kr_ser.get(p)) for p in months]},
+        "imp": {"usd": _m(win(imp_all, cur)), "yoy": imp_yoy,
+                "krUsd": _m(win(imp_kr, cur)), "krYoy": yoy(imp_kr, cur, prev),
+                "share": s_now, "sharePrev": s_prev,
+                "m": [_m(imp_all.get(p)) for p in months],
+                "krM": [_m(imp_kr.get(p)) for p in months],
+                "label": (codes.get(pick) or {}).get("label", pick),
+                "desc": (codes.get(pick) or {}).get("desc", "")},
+        "cap": {"nowMw": None if cap_now is None else round(cap_now),
+                "yoy": cap_yoy, "m": ser(cap)},
+        "idx": {"kr": DM.index([kr_ser.get(p) for p in months]),
+                "imp": DM.index([imp_all.get(p) for p in months]),
+                "cap": DM.index([cap.get(p) for p in months])},
+        "verdict": DM.attribute(kr_yoy, imp_yoy, s_now, s_prev, cap_yoy,
+                                dc.flat_pct, dc.share_pp),
+        "verify": verify,
+        "sources": [
+            {"name": "미국 수입", "who": "US Census International Trade API",
+             "freq": "월 1회 · 매년 4월 공표 때 과거치 연례 개정", "unit": "USD"},
+            {"name": "미국 설치·가동 용량", "who": "EIA Open Data (Preliminary Monthly Electric Generator Inventory)",
+             "freq": "월 1회 · 대규모(utility-scale) 한정, 배후 저장장치 제외", "unit": "MW"},
+            {"name": "한국 수출", "who": "관세청 품목별 국가별 수출입실적",
+             "freq": "월 1회 · 매월 15일경, 과거 월 소급 정정", "unit": "USD"},
+        ],
+    }
 
 
 def build(store: Store, cfg: B.BatteryConfig) -> dict | None:
@@ -292,7 +391,11 @@ def build(store: Store, cfg: B.BatteryConfig) -> dict | None:
         })
     draft.sort(key=lambda r: -(r["usd"] or 0))
 
+    # ── 6. 최종 수요 축 — 한국 수출 감소의 **원인**을 가른다 ──────────────
+    dem = build_demand(store, df, cfg, months, cur, prev, q3)
+
     return {
+        "demand": dem,
         "version": cfg.version,
         "builtAt": datetime.now(KST).strftime("%Y-%m-%d %H:%M KST"),
         "asOf": latest, "months": months,
