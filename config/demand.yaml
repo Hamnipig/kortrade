@@ -93,8 +93,16 @@ us_capacity:
     - "electricity/operating-generator-capacity"
     - "electricity/electric-power-operational-data"
     - "electricity/electricity-power-operational-data"   # 문서 표기 흔들림 대비
-  facet_candidates: ["energy_source_code", "fueltypeid", "fuelid"]
-  match: "batter"
+  # ★ 'batter' 하나로 찾으면 못 찾는다 (2026-09-28 실측).
+  #   EIA-860M 에서 배터리를 가리키는 축은 둘인데 표기가 전혀 다르다:
+  #     technology          = "Batteries"                     ← 'batter' 로 잡힌다
+  #     energy_source_code  = "MWH" / "Electricity used for energy storage"
+  #                                                           ← 'batter' 로 **안 잡힌다**
+  #   그래서 technology 를 후보 맨 앞에 두고, 매칭어에 'storage' 와 코드 'MWH' 를 더한다.
+  facet_candidates: ["technology", "technology_description", "energy_source_code",
+                     "fueltypeid", "fuelid", "energy_source"]
+  match_any: ["batter", "storage"]
+  match_codes: ["MWH", "BAT", "ESS"]
   # 가동 중만 센다. 계획(planned)을 섞으면 '설치됐다'가 아니라 '설치할 것이다'가 된다.
   status_filter: ["OP"]
 
