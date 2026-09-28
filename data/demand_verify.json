@@ -2,34 +2,135 @@
  "start": "2021-01",
  "end": "2026-08",
  "census": {
-  "rows": 0,
+  "rows": 158,
   "codes": {
    "8507600030": {
     "label": "컨테이너형 ESS(외함 수납)",
-    "desc": "",
-    "seen": false,
-    "matched": false,
+    "desc": "BATTERY ENERGY STORAGE SYSTEMS, AS IN STAT NOTE 2",
+    "seen": true,
+    "matched": true,
     "expect": "storage"
    },
    "8507600010": {
     "label": "승용 EV 배터리",
-    "desc": "",
-    "seen": false,
-    "matched": false,
+    "desc": "LITHUM-ION BATTERES FOR ELEC VEHICLE OF 8703.40-80",
+    "seen": true,
+    "matched": true,
     "expect": "vehicle"
    },
    "8507600090": {
     "label": "기타(셀·모듈 등)",
-    "desc": "",
-    "seen": false,
+    "desc": "LITHIUM-ION STORAGE BATTERIES, NESOI",
+    "seen": true,
     "matched": false,
     "expect": "other"
    }
-  }
+  },
+  "diag": {}
  },
  "eia": {
-  "rows": 0,
-  "found": null,
-  "note": "배터리 연료코드를 찾지 못했습니다. 이 축은 비워 둡니다."
+  "rows": 67,
+  "found": {
+   "route": "electricity/operating-generator-capacity",
+   "facet": "technology",
+   "ids": [
+    "Hydroelectric Pumped Storage",
+    "Natural Gas with Compressed Air Storage",
+    "Batteries",
+    "Solar Thermal without Energy Storage",
+    "Solar Thermal with Energy Storage"
+   ],
+   "names": [
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   "columns": [
+    "nameplate-capacity-mw",
+    "net-summer-capacity-mw",
+    "net-winter-capacity-mw",
+    "operating-year-month",
+    "planned-retirement-year-month",
+    "planned-derate-year-month",
+    "planned-derate-summer-cap-mw",
+    "planned-uprate-year-month",
+    "planned-uprate-summer-cap-mw",
+    "county",
+    "longitude",
+    "latitude"
+   ],
+   "frequencies": [
+    "monthly"
+   ]
+  },
+  "column": "nameplate-capacity-mw",
+  "diag": {
+   "electricity/operating-generator-capacity": {
+    "facets": [
+     "stateid",
+     "sector",
+     "entityid",
+     "plantid",
+     "generatorid",
+     "unit",
+     "technology",
+     "energy_source_code",
+     "prime_mover_code",
+     "balancing_authority_code",
+     "status"
+    ],
+    "columns": [
+     "nameplate-capacity-mw",
+     "net-summer-capacity-mw",
+     "net-winter-capacity-mw",
+     "operating-year-month",
+     "planned-retirement-year-month",
+     "planned-derate-year-month",
+     "planned-derate-summer-cap-mw",
+     "planned-uprate-year-month",
+     "planned-uprate-summer-cap-mw",
+     "county",
+     "longitude",
+     "latitude"
+    ],
+    "frequencies": [
+     "monthly"
+    ],
+    "samples": {
+     "technology": [
+      "Hydroelectric Pumped Storage=",
+      "Municipal Solid Waste=",
+      "Nuclear=",
+      "Other Gases=",
+      "Other Waste Biomass=",
+      "Petroleum Coke=",
+      "Petroleum Liquids=",
+      "Wood/Wood Waste Biomass=",
+      "Natural Gas with Compressed Air Storage=",
+      "Conventional Hydroelectric=",
+      "Natural Gas Fired Combustion Turbine=",
+      "Offshore Wind Turbine=",
+      "All Other=",
+      "Geothermal=",
+      "Natural Gas Steam Turbine=",
+      "Flywheels=",
+      "None=",
+      "Batteries=",
+      "Conventional Steam Coal=",
+      "Landfill Gas=",
+      "Natural Gas Fired Combined Cycle=",
+      "Onshore Wind Turbine=",
+      "Other Natural Gas=",
+      "Solar Thermal without Energy Storage=",
+      "Solar Thermal with Energy Storage="
+     ]
+    }
+   }
+  },
+  "fetched": 51667,
+  "total": 51667,
+  "months": "2021-01~2026-07"
  }
 }
