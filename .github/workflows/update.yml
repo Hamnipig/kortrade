@@ -145,15 +145,6 @@ jobs:
           set +e; python scripts/verify_flash.py --items; rc=$?; set -e
           [ "$rc" = "0" ] || echo "::warning::속보 슬롯 매핑 검증 불일치 — data/flash_verify.json 확인"
 
-      - name: 사이트 데이터 생성
-        run: |
-          python scripts/build_site.py
-          python scripts/build_watchlist.py
-          python scripts/build_universe.py
-          python scripts/build_chains.py
-          python scripts/build_battery.py
-          python scripts/build_flash.py || echo "속보 건너뜀 (수집 실패)"
-
       # 최종 수요 축 — 미국 수입(Census) · 미국 배터리 저장 가동용량(EIA).
       #
       # 왜: 對미 ESS 수출이 −13% 일 때 한국 수출 데이터만으로는
@@ -172,6 +163,15 @@ jobs:
           CENSUS_API_KEY: ${{ secrets.CENSUS_API_KEY }}
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
         run: python scripts/run_demand.py --start 2021-01
+
+      - name: 사이트 데이터 생성
+        run: |
+          python scripts/build_site.py
+          python scripts/build_watchlist.py
+          python scripts/build_universe.py
+          python scripts/build_chains.py
+          python scripts/build_battery.py
+          python scripts/build_flash.py || echo "속보 건너뜀 (수집 실패)"
 
       # 진단 — 시군구 전체 덤프. 사이트 파일을 만들지 않고 **로그로만** 남긴다.
       #
