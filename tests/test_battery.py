@@ -296,9 +296,12 @@ def test_wired_into_site_and_automation():
         assert token in html, f"2차전지 첫 화면 시각화에 {token} 가 없다"
     for q in ("턴어라운드", "피크 주의", "성장 → 가속", "감소 → 감속 · 악화"):
         assert q in html, f"사이클 맵 사분면 라벨 '{q}' 가 없다"
-    # 컨테이너가 격자 한 칸을 먹으면 안의 패널이 1/12 폭으로 찌그러진다
-    assert "#bcharts{display:contents}" in html.replace(" ", "").replace("\n", ""), \
-        "차트 컨테이너에 display:contents 가 없다 — 패널이 1/12 폭으로 찌그러진다"
+    # 컨테이너가 격자 한 칸을 먹으면 안의 패널이 1/12 폭으로 찌그러진다.
+    # (실측: 로테이션 맵이 세로 한 줄로 눌렸고, 수요 패널이 화면 절반만 썼다)
+    rule = next((l for l in html.splitlines()
+                 if "display:contents" in l and l.lstrip().startswith("#")), "")
+    for cid in ("#bcharts", "#bdem"):
+        assert cid in rule, f"{cid} 에 display:contents 가 없다 — 패널이 찌그러진다"
     # 차트가 먼저, 표가 나중. 표만 보이면 이 작업의 의미가 없다.
     assert html.index('id="bcharts"') < html.index("단계별 가속·턴어라운드"), \
         "차트 블록이 표 아래로 내려갔다"
