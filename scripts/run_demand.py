@@ -44,6 +44,8 @@ from kortrade.store import Store
 ROOT = Path(__file__).resolve().parent.parent
 VERIFY = ROOT / "data" / "demand_verify.json"
 TIMEOUT = 30
+PAGE = 5000        # EIA 요청당 행 상한 (문서 명시)
+MAX_PAGES = 12     # 60,000행까지. 배터리 설비 월별이면 충분하다
 log = logging.getLogger("run_demand")
 
 
@@ -169,33 +171,60 @@ def collect_eia(cfg: D.DemandConfig, store: Store, key: str,
         return {"rows": 0, "found": found,
                 "note": "용량 컬럼을 찾지 못했습니다. columns 를 보고 config 를 조정하세요."}
     freq = "monthly" if "monthly" in (found["frequencies"] or []) else None
-    params = {"api_key": key, "data[]": col, "start": start, "end": end,
-              "length": 5000, "sort[0][column]": "period", "sort[0][direction]": "asc"}
+    base = {"api_key": key, "data[]": col, "start": start, "end": end,
+            "length": PAGE, "sort[0][column]": "period", "sort[0][direction]": "asc"}
     if freq:
-        params["frequency"] = freq
+        base["frequency"] = freq
     for i, fid in enumerate(found["ids"]):
-        params[f"facets[{found['facet']}][{i}]"] = fid
-    data = _get(f"https://api.eia.gov/v2/{found['route']}/data", params)
-    recs = (data or {}).get("response", {}).get("data") or []
+        base[f"facets[{found['facet']}][{i}]"] = fid
+
+    # ★ 페이지네이션이 반드시 필요하다. 이 라우트는 **발전기 단위**로 돌아오므로
+    #   미국 배터리 설비만 해도 월 수천 행이고, EIA 는 요청당 5,000행이 상한이다.
+    #   한 번만 부르면 앞쪽 몇 달치만 받고 뒤를 통째로 날린다 — 그러면 최근월이
+    #   비어서 YoY 가 안 나오고, 화면에는 그냥 '데이터 없음'으로 보인다.
     agg: dict[str, float] = {}
-    for r in recs:
-        p = str(r.get("period", ""))[:7]
-        if len(p) != 7:
-            continue
-        st = str(r.get("statusDescription") or r.get("status") or "")
-        # 계획(planned)을 섞으면 '설치됐다'가 아니라 '설치할 것이다'가 된다
-        if cfg.status_filter and st and not any(s.lower() in st.lower()
-                                                for s in ["operat"] ):
-            continue
+    got = total = 0
+    for page in range(MAX_PAGES):
+        params = dict(base); params["offset"] = page * PAGE
+        data = _get(f"https://api.eia.gov/v2/{found['route']}/data", params)
+        resp = (data or {}).get("response") or {}
+        recs = resp.get("data") or []
         try:
-            agg[p] = agg.get(p, 0.0) + float(r.get(col))   # ★ 문자열로 온다
+            total = int(resp.get("total") or 0)
         except (TypeError, ValueError):
-            continue
-    rows = [{"source": "eia", "series": "capacity", "period": p, "value": v,
-             "unit": "MW"} for p, v in agg.items()]
+            total = 0
+        if not recs:
+            break
+        for r in recs:
+            pp = str(r.get("period", ""))[:7]
+            if len(pp) != 7:
+                continue
+            st = str(r.get("statusDescription") or r.get("status") or "")
+            # 계획(planned)을 섞으면 '설치됐다'가 아니라 '설치할 것이다'가 된다.
+            # ★ status 는 코드('OP')로 올 수도 설명('Operating')으로 올 수도 있다.
+            #   설명만 보고 거르면 코드로 오는 응답에서 **전부 걸러져 0행**이 된다.
+            if cfg.status_filter and st:
+                ok = (st.upper() in [x.upper() for x in cfg.status_filter]
+                      or "operat" in st.lower())
+                if not ok:
+                    continue
+            try:
+                agg[pp] = agg.get(pp, 0.0) + float(r.get(col))   # ★ 문자열로 온다
+            except (TypeError, ValueError):
+                continue
+        got += len(recs)
+        if got >= total or len(recs) < PAGE:
+            break
+    if total and got < total:
+        log.warning("EIA 응답 %d행 중 %d행만 받았습니다 (MAX_PAGES 상한). "
+                    "최근월이 잘렸을 수 있습니다.", total, got)
+    rows = [{"source": "eia", "series": "capacity", "period": pp, "value": v,
+             "unit": "MW"} for pp, v in agg.items()]
     if rows:
         store.upsert_demand(rows)
-    return {"rows": len(rows), "found": found, "column": col}
+    return {"rows": len(rows), "found": found, "column": col,
+            "fetched": got, "total": total,
+            "months": f"{min(agg)}~{max(agg)}" if agg else None}
 
 
 def main() -> int:
