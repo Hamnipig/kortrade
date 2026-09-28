@@ -106,13 +106,45 @@ def build_demand(store, df, cfg, months, cur, prev, q3) -> dict:
     cap_yoy = (None if (cap_now is None or not cap_prev)
                else round((cap_now / cap_prev - 1) * 100, 1))
 
+    # ── 왜 비었는지를 **정확히** 말한다 ────────────────────────────────
+    # "키를 못 찾았거나 아직 실행되지 않았습니다" 처럼 뭉뚱그리면, 실제 원인이
+    # 워크플로 단계 순서였던 것을 화면만 보고는 알 수 없다 (2026-09-28 실측:
+    # run_demand 가 build 뒤에 있어서 키가 있어도 영원히 비었다).
+    cen, ei = verify.get("census") or {}, verify.get("eia") or {}
+    codes_seen = [v for v in (cen.get("codes") or {}).values() if v.get("seen")]
+    if not verify:
+        reason = ("scripts/run_demand.py 가 아직 실행되지 않았습니다 "
+                  "(data/demand_verify.json 이 없습니다). 워크플로에서 수집 단계가 "
+                  "**사이트 데이터 생성보다 앞에** 있는지 확인하세요 — 뒤에 있으면 "
+                  "키가 있어도 영원히 빕니다.")
+    elif verify.get("skipped") or (cen.get("skipped") and ei.get("skipped")):
+        reason = ("CENSUS_API_KEY · EIA_API_KEY 가 둘 다 없습니다. "
+                  "GitHub Actions 시크릿에 넣으면 다음 갱신부터 채워집니다.")
+    elif not census and not eia:
+        reason = ("키는 있는데 응답에 행이 없었습니다. "
+                  + ("미국 HTS 코드가 응답과 안 맞을 수 있습니다. " if not codes_seen else "")
+                  + "data/demand_verify.json 을 확인하세요.")
+    else:
+        reason = "일부 축만 들어왔습니다. data/demand_verify.json 을 확인하세요."
+
+    axes = {
+        "census": {"ok": bool(imp_all),
+                   "note": (cen.get("skipped") or
+                            ("행 없음" if not codes_seen else
+                             ("코드 설명 불일치" if not any(
+                                 v.get("matched") for v in (cen.get("codes") or {}).values())
+                              else "정상")) if verify else "미실행")},
+        "eia": {"ok": bool(cap),
+                "note": (ei.get("skipped") or ei.get("note") or
+                         ("정상" if ei.get("found") else "배터리 코드 미발견"))
+                        if verify else "미실행"},
+    }
     have = bool(imp_all) or bool(cap)
     ser = lambda d: [None if d.get(p) is None else round(d[p], 1) for p in months]
     return {
         "ok": have,
-        "note": ("" if have else
-                 "미국 수입·설치 데이터가 아직 없습니다. scripts/run_demand.py 가 "
-                 "키를 못 찾았거나 아직 실행되지 않았습니다."),
+        "note": "" if have else reason,
+        "axes": axes,
         "asOf": months[-1], "window": cfg.window, "months": months,
         "picked": pick,
         "kr": {"usd": _m(win(kr_ser, cur)), "yoy": kr_yoy, "m": [_m(kr_ser.get(p)) for p in months]},
