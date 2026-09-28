@@ -79,7 +79,7 @@ h1{font-size:clamp(21px,3.4vw,29px);line-height:1.15;margin:0;font-weight:700;
 /* 동적으로 채우는 컨테이너. display:contents 가 없으면 이 div 자체가 격자 한 칸을
    차지해 버려서, 안의 패널들은 1/12 폭으로 찌그러지고 옆 패널까지 밀린다.
    (실측: 로테이션 맵이 세로 한 줄로 눌렸다) */
-#nation,#pinned,#bcharts{display:contents}
+#nation,#pinned,#bcharts,#bdem{display:contents}
 .p6{grid-column:span 6}
 /* 속보 표에서 조업일수에 중립인 유일한 열. 여기를 눈에 먼저 들어오게 한다. */
 .wt th.hicol,.wt td.hicol{background:var(--surface-2)}
@@ -1211,6 +1211,11 @@ const BVCLS = {turnaround:"vd-good", accelerating:"vd-good", bottoming:"vd-loc",
    아니라 증설–가동–재고 사이클이 문제라서, 부호가 바뀌는 자리(턴어라운드)가 핵심이다.
    ────────────────────────────────────────────────────────────────────────── */
 const BSCOL = {final:"--s1", component:"--s2", material:"--s3", equipment:"--s4"};
+// 최종 수요 판정 — '현지화'와 '점유율 상실'은 한국 수출을 똑같이 줄이지만
+// 투자 판단이 정반대다. 색으로 먼저 갈라 준다.
+const DVCLS = {share_loss:"vd-bad", demand_down:"vd-bad", onshoring:"vd-loc",
+               expanding:"vd-good", share_gain:"vd-good", mixed:"vd-mix",
+               partial:"vd-na", unknown:"vd-na"};
 const BACL = {x:[-60,120], y:[-70,70]};   // 극단값은 가장자리로 밀고 점선으로 표시만 바꾼다
 
 // 단계 롤업이 아니라 **품목**을 찍는다. 롤업만 보면 한 단계 안에서 갈리는 품목을 못 본다
@@ -1340,6 +1345,99 @@ function drawSpread(mount, sp, months){
   mount.innerHTML=""; mount.appendChild(s);
 }
 
+/* ── 최종 수요 대조 ────────────────────────────────────────────────────────
+   이 프로젝트가 반복해서 부딪힌 벽: 對미 ESS 수출 −13% 가 셋 중 무엇인가.
+     (a) 미국 수요가 줄었다  (b) 현지 생산으로 옮겨갔다  (c) 점유율을 뺏겼다
+   현지화지수는 (a)와 (b)를 부분적으로 가른다. **(c)는 한국 수출 데이터만으로는
+   원리적으로 볼 수 없다** — 미국 시장이 두 배가 됐는지 반토막 났는지 알 방법이 없다.
+   (b)와 (c)는 투자 판단이 정반대라서 이 구분이 이 패널의 존재 이유다.
+
+   ★ 세 축을 합치지 않는다. 단위(달러 vs MW)도 출처도 갱신주기도 다르다.
+     지수화해 방향만 나란히 놓는다. 합치는 순간 근거 없는 '글로벌 공급량'이 된다. */
+function renderDemand(host, D){
+  if (!host) return;
+  if (!D || !D.ok){
+    host.innerHTML = `
+      <section class="panel p12">
+        <div class="phead"><h2 class="ptitle">최종 수요 대조 — 아직 연결 전</h2>
+          <span class="unit">무료 키 2개 필요</span></div>
+        <p class="pnote">한국 수출만 보면 <b>'현지화'와 '점유율 상실'을 구분할 수 없습니다.</b>
+          둘 다 한국 수출을 줄이지만 투자 판단은 정반대입니다 — 현지화면 그 기업 실적은
+          오히려 좋을 수 있고, 점유율 상실이면 구조적 훼손입니다.
+          미국 <b>수입</b>과 미국 <b>설치용량</b>을 붙이면 갈라집니다.</p>
+        <div class="warn">${esc((D&&D.note)||"")}
+          GitHub Actions 시크릿에 <code>CENSUS_API_KEY</code> 와 <code>EIA_API_KEY</code> 를
+          넣으면 다음 갱신부터 채워집니다. 둘 다 무료입니다 —
+          <code>api.census.gov/data/key_signup.html</code> ·
+          <code>eia.gov/opendata/register.php</code>.
+          키가 없어도 나머지 파이프라인은 그대로 돕니다.</div>
+      </section>`;
+    return;
+  }
+  const v = D.verdict || {}, im = D.imp || {}, cp = D.cap || {}, kr = D.kr || {};
+  const idx = D.idx || {};
+  const rows = [
+    ["한국 → 미국 ESS 수출", kr.usd==null?"–":"$"+fm(kr.usd)+"M", kr.yoy, "관세청 8507603000"],
+    ["미국 수입 (전세계)", im.usd==null?"–":"$"+fm(im.usd)+"M", im.yoy,
+     "US Census "+esc(D.picked||"")],
+    ["  그중 한국", im.krUsd==null?"–":"$"+fm(im.krUsd)+"M", im.krYoy, "CTY_CODE 5800"],
+    ["한국 점유율", im.share==null?"–":im.share+"%", null,
+     im.sharePrev==null?"":`전년 ${im.sharePrev}% → ${im.share}%`],
+    ["미국 가동 배터리 저장", cp.nowMw==null?"–":fm(cp.nowMw)+"MW", cp.yoy,
+     "EIA · 대규모 한정"],
+  ];
+  host.innerHTML = `
+    <section class="panel p12">
+      <div class="phead"><h2 class="ptitle">최종 수요 대조 — 수출이 줄면 무슨 일인가</h2>
+        <span class="unit">각 계열 첫 달 = 100 · 지수는 비교용, 합산 아님</span></div>
+      <p class="pnote">한국 수출만 보면 <b>'현지화'와 '점유율 상실'이 똑같이 보입니다.</b>
+        둘 다 수출을 줄이지만 판단은 정반대입니다. 미국 <b>수입</b>이 시장 규모와 우리 몫을,
+        미국 <b>설치용량</b>이 최종 수요를 말해 줍니다.
+        <b>미국 수입이 느는데 한국 비중이 빠지면 현지화가 아니라 경쟁 패배입니다.</b></p>
+      <div class="legend">
+        <span class="lg"><span class="sw" style="background:var(--s1)"></span>한국 수출(달러)</span>
+        <span class="lg"><span class="sw" style="background:var(--s2)"></span>미국 수입(달러)</span>
+        <span class="lg"><span class="sw" style="background:var(--s3)"></span>미국 설치용량(MW)</span></div>
+      <div id="bdemchart"></div>
+      <p style="margin:14px 0 0">${v.label?`<span class="vdi ${DVCLS[v.code]||""}">${esc(v.label)}</span>`:""}
+        ${v.shareChg==null?"":`<span class="chip ${v.shareChg>0?'up':'down'}">점유율 ${
+          v.shareChg>0?"+":""}${v.shareChg}%p</span>`}</p>
+      <p class="pnote" style="margin-top:8px">${esc(v.note||"")}</p>
+      <div class="tscroll" style="margin-top:12px"><table class="wt"><thead><tr>
+        <th class="l">축</th><th>최근 ${D.window}개월</th><th>YoY</th><th class="l">출처</th>
+        </tr></thead><tbody>
+      ${rows.map(([k,val,y,src])=>`<tr>
+        <td class="l">${k.startsWith("  ")?`<span style="padding-left:16px">${esc(k.trim())}</span>`
+          :`<span class="it">${esc(k)}</span>`}</td>
+        <td>${val}</td>
+        <td class="${y>0?'up':(y<0?'down':'')}">${y==null?"–":pct(y)}</td>
+        <td class="l"><span class="tk" style="display:inline">${src}</span></td></tr>`).join("")}
+      </tbody></table></div>
+      <div class="warn" style="margin-top:14px"><b>읽을 때 반드시 지킬 것</b> —
+        ① <b>세 축을 더하지 마십시오.</b> 단위(달러 vs MW)도, 출처도, 갱신주기도 다릅니다.
+        ${(D.sources||[]).map(x=>`<br>　· ${esc(x.name)} — ${esc(x.who)} · ${esc(x.freq)}`).join("")}
+        <br>② <b>중량을 GWh 로 환산하지 않습니다.</b> HS 8507.60 은 셀·모듈·시스템이 섞여
+        kg 당 에너지밀도가 제품마다 다릅니다. 환산하면 그 가정이 결과를 만듭니다.
+        <br>③ <b>미국 설치용량은 수요이지 한국의 공급이 아닙니다.</b> '수요 위축'을 반증할 수는
+        있어도 '한국 기업이 공급 중'을 증명하지는 못합니다. EIA 는 대규모 설비만 집계하고
+        가정·상업용 배후 저장장치는 빠집니다.
+        <br>④ <b>한국 수출과 미국 수입은 같은 물건이 아닙니다.</b> 한국 8507603000 은 셀·팩,
+        미국 ${esc(D.picked||"")} 는 ${esc(im.desc||"외함 수납 시스템")} 입니다.
+        수준이 아니라 <b>방향</b>만 대조하십시오.
+        <br>⑤ 기업별 현지 출하량은 통관에도 EIA 에도 없습니다. 최종 확인은
+        DART·SEC EDGAR 공시입니다 — 분기 단위라 이 화면과 주기가 다릅니다.</div>
+    </section>`;
+  const ser = [];
+  if (idx.kr)  ser.push({name:"한국 수출", c:"--s1", v:ma3(idx.kr)});
+  if (idx.imp) ser.push({name:"미국 수입", c:"--s2", v:ma3(idx.imp)});
+  if (idx.cap) ser.push({name:"미국 설치", c:"--s3", v:ma3(idx.cap)});
+  const mount = document.getElementById("bdemchart");
+  if (ser.length) lineChart(mount, D.months||[], ser,
+    {w:980,h:260,padR:86,label:"한국 수출 · 미국 수입 · 미국 설치 지수",
+     fmtY:v=>Math.round(v), fmtT:v=>v.toFixed(0)});
+  else mount.innerHTML = '<p class="pnote">지수를 만들 만큼의 월별 데이터가 아직 없습니다.</p>';
+}
+
 /* 이 탭의 첫 화면. 표로 답하던 것을 그림으로 먼저 답한다 —
    ① 어느 품목이 사이클 어디에 있나 ② 완제품과 상류가 벌어지고 있나
    ③ 단계별로 무엇이 크고 무엇이 꺾였나. */
@@ -1388,6 +1486,7 @@ function renderBatteryCharts(B){
             :"<li>없음</li>"}</ol></div>
       </div>` : ""}
     </section>
+    <div id="bdem"></div>
     <section class="panel p12">
       <div class="phead"><h2 class="ptitle">단계별 월별 추이</h2>
         <span class="unit">백만 USD · 3개월 이동평균</span></div>
@@ -1398,6 +1497,7 @@ function renderBatteryCharts(B){
     </section>`;
 
   drawAccelMap(document.getElementById("bmap"), B);
+  renderDemand(document.getElementById("bdem"), B.demand);
 
   if (idx){
     lineChart(document.getElementById("bidx"), B.months,
