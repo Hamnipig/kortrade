@@ -1214,6 +1214,7 @@ const BSCOL = {final:"--s1", component:"--s2", material:"--s3", equipment:"--s4"
 // 최종 수요 판정 — '현지화'와 '점유율 상실'은 한국 수출을 똑같이 줄이지만
 // 투자 판단이 정반대다. 색으로 먼저 갈라 준다.
 const DVCLS = {share_loss:"vd-bad", demand_down:"vd-bad", onshoring:"vd-loc",
+               demand_ok_partial:"vd-na",
                expanding:"vd-good", share_gain:"vd-good", mixed:"vd-mix",
                partial:"vd-na", unknown:"vd-na"};
 const BACL = {x:[-60,120], y:[-70,70]};   // 극단값은 가장자리로 밀고 점선으로 표시만 바꾼다
