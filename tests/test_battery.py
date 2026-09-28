@@ -285,6 +285,26 @@ def test_wired_into_site_and_automation():
         assert token in html, f"화면에 {token} 가 없다"
     assert "셀 마진을 추정하지 않습니다" in html, \
         "양극재/셀의 기제 차이 경고가 화면에 없다"
+
+    # ── 첫 화면 시각화 (2026-09-28) ──────────────────────────────────────
+    # 이 탭은 분석은 다 하면서 **표만 있어서 한눈에 안 들어왔다.** 화장품 탭의
+    # 로테이션 3종과 같은 자리를 만든다. 축은 다르다 — 화장품은 '비중 싸움',
+    # 2차전지는 '사이클 위치'(성장률 × 가속)다.
+    for token in ("renderBatteryCharts", "drawAccelMap", "batteryIndex",
+                  "drawLocTrend", 'id="bmap"', 'id="bidx"', 'id="bstage"',
+                  'id="bloc"', 'id="bcharts"'):
+        assert token in html, f"2차전지 첫 화면 시각화에 {token} 가 없다"
+    for q in ("턴어라운드", "피크 주의", "성장 → 가속", "감소 → 감속 · 악화"):
+        assert q in html, f"사이클 맵 사분면 라벨 '{q}' 가 없다"
+    # 컨테이너가 격자 한 칸을 먹으면 안의 패널이 1/12 폭으로 찌그러진다
+    assert "#bcharts{display:contents}" in html.replace(" ", "").replace("\n", ""), \
+        "차트 컨테이너에 display:contents 가 없다 — 패널이 1/12 폭으로 찌그러진다"
+    # 차트가 먼저, 표가 나중. 표만 보이면 이 작업의 의미가 없다.
+    assert html.index('id="bcharts"') < html.index("단계별 가속·턴어라운드"), \
+        "차트 블록이 표 아래로 내려갔다"
+    # ready 가 비었을 때 undefined.key 로 페이지 전체가 죽던 자리
+    assert "ready[0].key" not in html or "ready[0] ?" in html, \
+        "섹터 수집 실패 시 페이지 전체가 죽는 경로가 남아 있다"
     for wf in (".github/workflows/update.yml", ".github/workflows/flash.yml"):
         s = (ROOT / wf).read_text(encoding="utf-8")
         assert "build_battery.py" in s, f"{wf} 에 배터리 빌드가 없다"
