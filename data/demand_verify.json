@@ -1,3 +1,35 @@
 {
- "skipped": "키 없음"
+ "start": "2021-01",
+ "end": "2026-08",
+ "census": {
+  "rows": 0,
+  "codes": {
+   "8507600030": {
+    "label": "컨테이너형 ESS(외함 수납)",
+    "desc": "",
+    "seen": false,
+    "matched": false,
+    "expect": "storage"
+   },
+   "8507600010": {
+    "label": "승용 EV 배터리",
+    "desc": "",
+    "seen": false,
+    "matched": false,
+    "expect": "vehicle"
+   },
+   "8507600090": {
+    "label": "기타(셀·모듈 등)",
+    "desc": "",
+    "seen": false,
+    "matched": false,
+    "expect": "other"
+   }
+  }
+ },
+ "eia": {
+  "rows": 0,
+  "found": null,
+  "note": "배터리 연료코드를 찾지 못했습니다. 이 축은 비워 둡니다."
+ }
 }
