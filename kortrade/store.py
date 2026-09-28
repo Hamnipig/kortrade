@@ -90,6 +90,21 @@ CREATE TABLE IF NOT EXISTS region_trade (
 CREATE INDEX IF NOT EXISTS ix_region_place ON region_trade (sido_cd, sigungu_name, hs_code, period);
 CREATE INDEX IF NOT EXISTS ix_region_hs    ON region_trade (hs_code, period);
 
+-- 최종 수요 축 — 미국 수입(Census)과 미국 배터리 저장 가동용량(EIA).
+-- ★ 관세청 데이터와 **같은 표에 담지 않는다.** 단위(달러 vs GW)도 출처도 갱신주기도
+--   다르다. 한 표에 넣으면 언젠가 누가 SUM 을 걸고, 그 순간 근거 없는
+--   '글로벌 공급량'이 만들어진다. 표를 분리하는 것이 그 실수에 대한 방어다.
+CREATE TABLE IF NOT EXISTS demand_series (
+    source     TEXT NOT NULL,           -- 'census' | 'eia'
+    series     TEXT NOT NULL,           -- census: '<HTS10>:<CTY|ALL>' / eia: 'capacity'
+    period     TEXT NOT NULL,           -- 'YYYY-MM'
+    value      REAL,
+    unit       TEXT,                    -- 'USD' | 'MW' | 'kg'
+    fetched_at TEXT NOT NULL,
+    UNIQUE (source, series, period)
+);
+CREATE INDEX IF NOT EXISTS ix_demand ON demand_series (source, series, period);
+
 CREATE TABLE IF NOT EXISTS sido_codes (
     sido_cd    TEXT NOT NULL,
     sido_name  TEXT NOT NULL,
@@ -139,11 +154,14 @@ REGION_KEY = ["period", "hs_code", "sido_cd", "sigungu_name"]
 UNIVERSE_COLS = ["period", "hs4", "hs2", "top_name", "exp_usd", "exp_wgt", "imp_usd"]
 UNIVERSE_KEY = ["period", "hs4"]
 
+DEMAND_COLS = ["source", "series", "period", "value", "unit"]
+DEMAND_KEY = ["source", "series", "period"]
+
 FLASH_COLS = ["period", "seq", "kind", "slot", "dt", "day_to", "exp_usd"]
 FLASH_KEY = ["period", "seq", "kind", "slot"]
 
 _NUMERIC = {"exp_usd", "exp_wgt", "imp_usd", "imp_wgt", "bal_usd", "exp_cnt", "imp_cnt",
-            "seq", "day_to"}
+            "seq", "day_to", "value"}
 
 
 def _now() -> str:
@@ -246,6 +264,25 @@ class Store:
         """속보. 잠정치는 다음 순(旬) 발표 때 소급 조정되는 일이 잦으므로
         revisions 에 남는 변경이 많아도 정상이다 — 오히려 그게 정보다."""
         return self._upsert("flash_trade", FLASH_COLS, FLASH_KEY, rows)
+
+    def upsert_demand(self, rows: Iterable[dict]) -> dict[str, int]:
+        """최종 수요 축(미국 수입·설치). 관세청 표와 **섞지 않는다** — 단위도
+        출처도 갱신주기도 다르다. Census 는 4월 공표 때 과거치를 연례 개정하므로
+        재수집 시 revisions 에 변경이 잡히는 것이 정상이다."""
+        return self._upsert("demand_series", DEMAND_COLS, DEMAND_KEY, rows)
+
+    def demand(self, source: str, series: str | None = None) -> dict[str, dict[str, float]]:
+        """{series: {period: value}} 로 돌려준다."""
+        sql = "SELECT series, period, value FROM demand_series WHERE source = ?"
+        args = [source]
+        if series:
+            sql += " AND series = ?"; args.append(series)
+        out: dict[str, dict[str, float]] = {}
+        for r in self.conn.execute(sql, args):
+            if r["value"] is None:
+                continue
+            out.setdefault(r["series"], {})[r["period"]] = float(r["value"])
+        return out
 
     def purge_bad_flash(self) -> list[str]:
         """달력에 없는 period 행을 지우고, 지운 값들을 돌려준다.
@@ -356,9 +393,11 @@ class Store:
             return self.conn.execute(sql).fetchone()
         s = one("SELECT COUNT(*) n, MIN(period) a, MAX(period) b FROM sector_trade")
         r = one("SELECT COUNT(*) n, MIN(period) a, MAX(period) b FROM region_trade")
+        d = one("SELECT COUNT(*) n, MIN(period) a, MAX(period) b FROM demand_series")
         rev = one("SELECT COUNT(*) n FROM revisions")
         return {
             "sector_trade": {"rows": s["n"], "from": s["a"], "to": s["b"]},
             "region_trade": {"rows": r["n"], "from": r["a"], "to": r["b"]},
+            "demand_series": {"rows": d["n"], "from": d["a"], "to": d["b"]},
             "revisions": rev["n"],
         }
