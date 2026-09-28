@@ -154,6 +154,25 @@ jobs:
           python scripts/build_battery.py
           python scripts/build_flash.py || echo "속보 건너뜀 (수집 실패)"
 
+      # 최종 수요 축 — 미국 수입(Census) · 미국 배터리 저장 가동용량(EIA).
+      #
+      # 왜: 對미 ESS 수출이 −13% 일 때 한국 수출 데이터만으로는
+      #   (a)수요 위축 (b)현지 생산 전환 (c)점유율 상실 을 가를 수 없다.
+      #   특히 (c)는 **원리적으로** 볼 수 없다 — 한국 수출만 보고 있으면 미국 시장이
+      #   두 배가 됐는지 반토막 났는지 알 방법이 없다. (b)와 (c)는 판단이 정반대다.
+      #
+      # 키 두 개가 더 필요하고 **둘 다 무료**다. 없으면 이 단계는 조용히 건너뛰고
+      # 0 으로 끝난다 — 곁다리 축이라 여기서 죽으면 안 된다.
+      #   CENSUS_API_KEY  https://api.census.gov/data/key_signup.html
+      #   EIA_API_KEY     https://www.eia.gov/opendata/register.php
+      - name: 수집 — 최종 수요(미국 수입·설치용량)
+        timeout-minutes: 10
+        continue-on-error: true
+        env:
+          CENSUS_API_KEY: ${{ secrets.CENSUS_API_KEY }}
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+        run: python scripts/run_demand.py --start 2021-01
+
       # 진단 — 시군구 전체 덤프. 사이트 파일을 만들지 않고 **로그로만** 남긴다.
       #
       # 화면은 카테고리당 상위 8개 시군구만 싣는데, 기초(330499)는 그 8개가 카테고리의
