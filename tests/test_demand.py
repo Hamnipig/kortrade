@@ -142,7 +142,36 @@ def test_build_without_demand_data_is_graceful():
     assert payload["demand"]["ok"] is False
     assert payload["demand"]["note"], "왜 비었는지 화면에 말할 근거가 없다"
     assert payload["demand"]["verdict"]["code"] in ("partial", "unknown")
-    print("  ✓ 키 없음 — 이 축만 비고 파이프라인은 계속 돈다")
+    # ★ 원인을 뭉뚱그리면 안 된다. 실제로 원인이 **워크플로 단계 순서**였는데
+    #   "키를 못 찾았거나 아직 실행되지 않았습니다" 로만 떠서 화면만 보고는
+    #   알 수 없었다 (2026-09-28). 축별 상태를 따로 낸다.
+    ax = payload["demand"]["axes"]
+    assert set(ax) == {"census", "eia"} and all(v["note"] for v in ax.values()), ax
+    assert ax["census"]["ok"] is False and ax["eia"]["ok"] is False
+    print("  ✓ 키 없음 — 이 축만 비고 파이프라인은 계속 돈다 (원인·축별 상태 표시)")
+
+
+def test_collection_runs_before_build():
+    """★ 수집이 빌드보다 **앞**에 있어야 한다.
+
+    2026-09-28 실측 버그: `수집 — 최종 수요` 단계가 `사이트 데이터 생성` **뒤**에
+    있었다. build_battery.py 는 DB 의 demand_series 와 data/demand_verify.json 을
+    읽으므로, 순서가 뒤집히면 **키를 넣어도 패널이 영원히 빈다.** 그리고 화면에는
+    "키를 못 찾았거나 아직 실행되지 않았습니다" 로만 떠서 원인을 알 수 없다.
+    """
+    import yaml
+    d = yaml.safe_load((ROOT / ".github" / "workflows" / "update.yml").read_text(encoding="utf-8"))
+    names = [s.get("name", "") for s in d["jobs"]["collect"]["steps"]]
+    i_dem = next(i for i, n in enumerate(names) if "최종 수요" in n)
+    i_bld = names.index("사이트 데이터 생성")
+    assert i_dem < i_bld, (
+        f"최종 수요 수집({i_dem + 1})이 사이트 빌드({i_bld + 1})보다 뒤에 있다 — "
+        "키가 있어도 패널이 영원히 빈다")
+    # 다른 수집 단계들도 같은 함정에 빠지지 않았는지 함께 본다
+    for kw in ("섹터 국가별", "워치리스트", "유니버스", "속보"):
+        i = next((i for i, n in enumerate(names) if kw in n), None)
+        assert i is None or i < i_bld, f"'{kw}' 수집이 빌드 뒤에 있다"
+    print(f"  ✓ 단계 순서 — 수집({i_dem + 1}) < 빌드({i_bld + 1})")
 
 
 def test_collector_never_leaks_key_and_exits_clean():
