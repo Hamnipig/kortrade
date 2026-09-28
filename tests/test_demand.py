@@ -207,6 +207,25 @@ def test_collector_never_leaks_key_and_exits_clean():
     #   코드로 오는 응답에서 전부 걸러져 0행이 된다.
     assert 'st.upper() in [x.upper() for x in cfg.status_filter]' in src and \
            '"operat" in st.lower()' in src, "status 코드/설명 양쪽을 받지 않는다"
+    # ★ Census time 파라미터 — "from+X+to+Y" 를 그대로 넣으면 requests 가 '+' 를
+    #   %2B(리터럴 플러스)로 인코딩해 Census 가 못 읽는다. **공백**이어야 한다.
+    assert 'f"from {start} to {end}"' in src, \
+        "time 파라미터에 '+' 를 직접 넣고 있다 — %2B 로 인코딩돼 행이 0개가 된다"
+    # 주석은 사고 경위를 설명하느라 'from+' 를 언급한다 — **실행되는 줄**만 본다
+    _cen = src.split("def collect_census")[1].split("\ndef ")[0]
+    _code = "\n".join(l for l in _cen.splitlines() if not l.lstrip().startswith("#"))
+    assert "from+" not in _code, "Census 쿼리에 리터럴 '+' 가 남아 있다"
+    # ★ 'batter' 하나로는 EIA 배터리 축을 못 찾는다.
+    #   energy_source_code 의 MWH 설명은 "Electricity used for energy storage" 다.
+    cfg = D.load()
+    assert "storage" in cfg.match_any, "'storage' 가 없으면 energy_source_code 를 놓친다"
+    assert "MWH" in cfg.match_codes, "배터리 에너지원 코드 MWH 를 코드로도 봐야 한다"
+    assert cfg.facet_candidates[0] == "technology", \
+        "technology 가 'Batteries' 로 잡히는 유일한 축이라 맨 앞이어야 한다"
+    # ★ 실패했을 때 무엇을 봤는지 남겨야 다음 실행이 깜깜하지 않다
+    assert "diag" in src and "samples" in src, "탐색 실패 시 진단을 안 남긴다"
+    assert "LAST" in src and '"status": r.status_code' in src, \
+        "상태코드를 안 남기면 '행 없음'과 '파라미터 오류'를 구분할 수 없다"
     print("  ✓ 수집기 — 키 미노출 · 키 없으면 정상 종료 · 코드 자동 발견")
 
 
