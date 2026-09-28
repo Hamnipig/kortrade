@@ -49,7 +49,7 @@ SCRIPTS = [
     "run_update", "run_watchlist", "run_universe", "run_flash",
     "build_site", "build_watchlist", "build_universe", "build_chains",
     "build_flash", "build_battery", "verify_flash", "inspect_flash",
-    "bootstrap_codes", "check_key", "dump_places", "run_demand",
+    "bootstrap_codes", "check_key", "dump_places", "run_demand", "merge_db",
 ]
 
 
