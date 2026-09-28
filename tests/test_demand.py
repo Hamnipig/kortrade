@@ -197,6 +197,16 @@ def test_collector_never_leaks_key_and_exits_clean():
     assert "def discover_eia" in src and "facet/" in src
     # EIA v2 는 숫자를 문자열로 준다 — float() 없이 더하면 문자열 연결이 된다
     assert "float(r.get(col))" in src
+    # ★ 페이지네이션 — 이 라우트는 **발전기 단위**라 미국 배터리 설비만 월 수천 행이고
+    #   EIA 는 요청당 5,000행이 상한이다. 한 번만 부르면 앞쪽 몇 달치만 받고
+    #   최근월을 통째로 날린다 → YoY 가 안 나오고 화면은 '데이터 없음'이 된다.
+    assert "offset" in src and "MAX_PAGES" in src and "PAGE = 5000" in src, \
+        "EIA 응답 페이지네이션이 없다 — 최근월이 잘린다"
+    assert 'resp.get("total")' in src, "받은 행 수를 총량과 대조하지 않는다"
+    # ★ status 는 코드('OP')로도 설명('Operating')으로도 온다. 설명만 보고 거르면
+    #   코드로 오는 응답에서 전부 걸러져 0행이 된다.
+    assert 'st.upper() in [x.upper() for x in cfg.status_filter]' in src and \
+           '"operat" in st.lower()' in src, "status 코드/설명 양쪽을 받지 않는다"
     print("  ✓ 수집기 — 키 미노출 · 키 없으면 정상 종료 · 코드 자동 발견")
 
 
