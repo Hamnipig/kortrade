@@ -1365,9 +1365,12 @@ function renderDemand(host, D){
           둘 다 한국 수출을 줄이지만 투자 판단은 정반대입니다 — 현지화면 그 기업 실적은
           오히려 좋을 수 있고, 점유율 상실이면 구조적 훼손입니다.
           미국 <b>수입</b>과 미국 <b>설치용량</b>을 붙이면 갈라집니다.</p>
-        <div class="warn">${esc((D&&D.note)||"")}
-          GitHub Actions 시크릿에 <code>CENSUS_API_KEY</code> 와 <code>EIA_API_KEY</code> 를
-          넣으면 다음 갱신부터 채워집니다. 둘 다 무료입니다 —
+        <div class="warn"><b>왜 비어 있나</b> — ${esc((D&&D.note)||"원인 불명")}
+          ${(D&&D.axes) ? `<br><br>축별 상태 —
+            <b>미국 수입(Census)</b> ${D.axes.census.ok?"✓":"✗"} ${esc(D.axes.census.note||"")} ·
+            <b>미국 설치(EIA)</b> ${D.axes.eia.ok?"✓":"✗"} ${esc(D.axes.eia.note||"")}` : ""}
+          <br><br>GitHub Actions 시크릿 <code>CENSUS_API_KEY</code> ·
+          <code>EIA_API_KEY</code> 두 개가 필요하고 발급은 무료입니다 —
           <code>api.census.gov/data/key_signup.html</code> ·
           <code>eia.gov/opendata/register.php</code>.
           키가 없어도 나머지 파이프라인은 그대로 돕니다.</div>
