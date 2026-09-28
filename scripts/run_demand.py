@@ -49,18 +49,33 @@ MAX_PAGES = 12     # 60,000행까지. 배터리 설비 월별이면 충분하다
 log = logging.getLogger("run_demand")
 
 
+LAST: dict = {}     # 마지막 호출의 진단 정보 (상태코드·오류본문). 키는 절대 안 담는다.
+
+
 def _get(url: str, params: dict, tries: int = 2) -> object | None:
-    """★ 실패해도 URL 을 로그에 찍지 않는다 — 키가 들어 있다."""
+    """★ 실패해도 URL 을 로그에 찍지 않는다 — 키가 들어 있다.
+
+    대신 **상태코드와 오류 본문 앞부분**을 LAST 에 남긴다. 이게 없으면
+    '행 없음'과 '파라미터 오류'를 구분할 수 없어서 추측만 반복하게 된다
+    (2026-09-28: time 파라미터 인코딩 문제를 이것 없이 찾느라 한 바퀴 돌았다).
+    """
+    global LAST
     for i in range(tries):
         try:
             r = requests.get(url, params=params, timeout=TIMEOUT)
+            LAST = {"status": r.status_code, "body": r.text[:300].strip()}
             if r.status_code == 200:
-                return r.json()
-            # 204 = 조건에 맞는 행 없음(Census). 오류가 아니다.
+                try:
+                    return r.json()
+                except ValueError:
+                    LAST["note"] = "JSON 이 아님"
+                    return None
             if r.status_code in (204, 404):
                 return None
-            log.warning("HTTP %s (%s)", r.status_code, url.split("?")[0])
+            log.warning("HTTP %s (%s) %s", r.status_code, url.split("?")[0],
+                        r.text[:160].replace("\n", " "))
         except Exception as exc:                        # noqa: BLE001
+            LAST = {"status": None, "body": f"{type(exc).__name__}"}
             log.warning("요청 실패: %s", type(exc).__name__)
         time.sleep(1.5 * (i + 1))
     return None
@@ -76,20 +91,35 @@ def collect_census(cfg: D.DemandConfig, store: Store, key: str,
     그게 이 축의 존재 이유(시장 규모 대비 우리 몫)이기 때문이다.
     """
     base = f"https://api.census.gov/data/{cfg.dataset}"
-    seen, rows = {}, []
+    seen, rows, diag = {}, [], {}
     for c in cfg.codes:
         for tag, partner in (("KR", cfg.partner), ("ALL", None)):
             params = {
                 "get": "I_COMMODITY,I_COMMODITY_SDESC,GEN_VAL_MO,CTY_CODE",
                 "I_COMMODITY": c.code, "COMM_LVL": "HS10",
-                "time": f"from+{start}+to+{end}", "key": key,
+                # ★ 공백이어야 한다. "from+X+to+Y" 를 그대로 넣으면 requests 가
+                #   '+' 를 %2B(리터럴 플러스)로 인코딩해 Census 가 못 읽는다.
+                #   공백을 넣어야 '+' 로 인코딩돼 문서의 예시와 같아진다.
+                "time": f"from {start} to {end}", "key": key,
             }
             if partner:
                 params["CTY_CODE"] = partner
             data = _get(base, params)
             if not isinstance(data, list) or len(data) < 2:
-                log.info("Census %s/%s: 행 없음", c.code, tag)
-                continue
+                # 범위 문법 문제인지 코드가 없는 건지 가른다 — 단월로 한 번 더
+                probe = dict(params); probe["time"] = end
+                p2 = _get(base, probe)
+                diag[f"{c.code}:{tag}"] = {
+                    "range": "행 없음", "single": ("행 있음" if isinstance(p2, list)
+                                                  and len(p2) > 1 else "행 없음"),
+                    "status": LAST.get("status"), "body": LAST.get("body", "")[:200],
+                }
+                if isinstance(p2, list) and len(p2) > 1:
+                    data = p2          # 단월이라도 건진다
+                else:
+                    log.info("Census %s/%s: 행 없음 (HTTP %s) %s", c.code, tag,
+                             LAST.get("status"), LAST.get("body", "")[:120])
+                    continue
             head = {n: i for i, n in enumerate(data[0])}
             agg: dict[str, float] = {}
             for r in data[1:]:
@@ -122,54 +152,82 @@ def collect_census(cfg: D.DemandConfig, store: Store, key: str,
             "matched": bool(desc) and c.expect.lower() in desc.lower(),
             "expect": c.expect,
         }
-    return {"rows": len(rows), "codes": verdicts}
+    return {"rows": len(rows), "codes": verdicts, "diag": diag}
 
 
 # ── ② 미국 배터리 저장 가동용량 (EIA) ─────────────────────────────────────
 
-def discover_eia(cfg: D.DemandConfig, key: str) -> dict | None:
-    """라우트와 배터리 연료코드를 **문서가 아니라 API 에게 물어서** 찾는다.
+def _label(f: dict) -> str:
+    """facet 값의 사람이 읽는 이름. 필드 이름이 라우트마다 다르다."""
+    for k in ("name", "description", "alias", "value"):
+        v = f.get(k)
+        if v:
+            return str(v)
+    return ""
 
-    EIA 문서에는 연료코드표가 없고 라우트 표기도 흔들린다(문서 안에서도 두 가지로
-    나온다). 코드를 추측해 박아 넣으면 조용히 빈 데이터가 쌓이므로,
-    facet 엔드포인트를 훑어 설명에 'batter' 가 들어간 코드를 찾는다.
+
+def discover_eia(cfg: D.DemandConfig, key: str) -> tuple[dict | None, dict]:
+    """라우트와 배터리 축을 **문서가 아니라 API 에게 물어서** 찾는다.
+
+    EIA 문서에는 코드표가 없고 라우트 표기도 흔들린다(문서 안에서도 두 가지로 나온다).
+    추측해 박아 넣으면 조용히 빈 데이터가 쌓이므로 facet 엔드포인트를 훑는다.
+
+    ★ 'batter' 하나로 찾으면 못 찾는다 (2026-09-28 실측 실패).
+      EIA-860M 에서 배터리를 가리키는 축이 둘인데 표기가 전혀 다르다:
+        technology         = "Batteries"                          ← 'batter' 로 잡힌다
+        energy_source_code = "MWH" / "Electricity used for energy storage"
+                                                                  ← 'batter' 로 **안 잡힌다**
+      그래서 match_any 에 'storage' 를, match_codes 에 'MWH' 를 넣고 둘 다 본다.
+
+    ★ 두 번째 반환값은 **진단**이다. 못 찾았을 때 어떤 라우트에 어떤 facet 이 있고
+      값이 어떻게 생겼는지를 남긴다. 이게 없으면 다음 실행도 똑같이 깜깜하다.
     """
+    diag: dict = {}
     for route in cfg.routes:
         meta = _get(f"https://api.eia.gov/v2/{route}", {"api_key": key})
         if not isinstance(meta, dict) or "response" not in meta:
+            diag[route] = {"meta": f"응답 없음 (HTTP {LAST.get('status')})",
+                           "body": LAST.get("body", "")[:160]}
             continue
-        facets = [f.get("id") for f in (meta["response"].get("facets") or [])]
-        cols = list((meta["response"].get("data") or {}).keys())
-        freqs = [f.get("id") for f in (meta["response"].get("frequency") or [])]
+        resp = meta["response"]
+        facets = [str(f.get("id")) for f in (resp.get("facets") or [])]
+        cols = list((resp.get("data") or {}).keys())
+        freqs = [str(f.get("id")) for f in (resp.get("frequency") or [])]
+        diag[route] = {"facets": facets, "columns": cols, "frequencies": freqs,
+                       "samples": {}}
         for fid in cfg.facet_candidates:
             if fid not in facets:
                 continue
             fv = _get(f"https://api.eia.gov/v2/{route}/facet/{fid}", {"api_key": key})
-            if not isinstance(fv, dict):
-                continue
-            hits = [f for f in (fv.get("response", {}).get("facets") or [])
-                    if cfg.match in str(f.get("name", "")).lower()
-                    or cfg.match in str(f.get("id", "")).lower()]
+            vals = (fv or {}).get("response", {}).get("facets") or []
+            # 못 찾았을 때 보라고 값 표본을 남긴다 (너무 길면 화면이 안 읽힌다)
+            diag[route]["samples"][fid] = [
+                f"{f.get('id')}={_label(f)}" for f in vals[:25]]
+            hits = [f for f in vals
+                    if any(m in _label(f).lower() or m in str(f.get("id", "")).lower()
+                           for m in cfg.match_any)
+                    or str(f.get("id", "")).upper() in cfg.match_codes]
             if hits:
-                return {"route": route, "facet": fid,
-                        "ids": [str(h.get("id")) for h in hits],
-                        "names": [str(h.get("name")) for h in hits],
-                        "columns": cols, "frequencies": freqs}
-    return None
+                return ({"route": route, "facet": fid,
+                         "ids": [str(h.get("id")) for h in hits],
+                         "names": [_label(h) for h in hits],
+                         "columns": cols, "frequencies": freqs}, diag)
+    return None, diag
 
 
 def collect_eia(cfg: D.DemandConfig, store: Store, key: str,
                 start: str, end: str) -> dict:
-    found = discover_eia(cfg, key)
+    found, diag = discover_eia(cfg, key)
     if not found:
-        return {"rows": 0, "found": None,
-                "note": "배터리 연료코드를 찾지 못했습니다. 이 축은 비워 둡니다."}
+        return {"rows": 0, "found": None, "diag": diag,
+                "note": "배터리 축(facet)을 찾지 못했습니다. demand_verify.json 의 "
+                        "eia.diag 에 라우트별 facet 목록과 값 표본이 있습니다."}
     # 용량 컬럼 이름이 라우트마다 다르다. 있는 것 중 첫 번째를 쓴다.
     col = next((c for c in ("capacity", "nameplate-capacity-mw", "net-summer-capacity-mw",
                             "total-capacity") if c in (found["columns"] or [])), None)
     if not col:
-        return {"rows": 0, "found": found,
-                "note": "용량 컬럼을 찾지 못했습니다. columns 를 보고 config 를 조정하세요."}
+        return {"rows": 0, "found": found, "diag": diag,
+                "note": f"용량 컬럼을 찾지 못했습니다. 이 라우트의 컬럼: {found['columns']}"}
     freq = "monthly" if "monthly" in (found["frequencies"] or []) else None
     base = {"api_key": key, "data[]": col, "start": start, "end": end,
             "length": PAGE, "sort[0][column]": "period", "sort[0][direction]": "asc"}
@@ -222,7 +280,7 @@ def collect_eia(cfg: D.DemandConfig, store: Store, key: str,
              "unit": "MW"} for pp, v in agg.items()]
     if rows:
         store.upsert_demand(rows)
-    return {"rows": len(rows), "found": found, "column": col,
+    return {"rows": len(rows), "found": found, "column": col, "diag": diag,
             "fetched": got, "total": total,
             "months": f"{min(agg)}~{max(agg)}" if agg else None}
 

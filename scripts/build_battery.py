@@ -127,17 +127,43 @@ def build_demand(store, df, cfg, months, cur, prev, q3) -> dict:
     else:
         reason = "일부 축만 들어왔습니다. data/demand_verify.json 을 확인하세요."
 
+    # ★ 진단을 화면까지 끌고 온다. "행 없음"만 보여 주면 JSON 을 열기 전까지
+    #   파라미터 문제인지 코드가 없는 건지 알 수 없다 (2026-09-28 실측).
+    cdiag = cen.get("diag") or {}
+    cnote = cen.get("skipped")
+    if not cnote and verify:
+        if imp_all:
+            cnote = "정상"
+        elif cdiag:
+            one = next(iter(cdiag.values()))
+            st, sg = one.get("status"), one.get("single")
+            cnote = (f"행 없음 (HTTP {st}"
+                     + (f", 단월 조회는 {sg}" if sg else "") + ")"
+                     + (" — 단월이 되면 기간 문법 문제, 단월도 안 되면 HTS 코드 문제"
+                        if sg else ""))
+        elif not codes_seen:
+            cnote = "행 없음"
+        elif not any(v.get("matched") for v in (cen.get("codes") or {}).values()):
+            cnote = "코드 설명 불일치"
+        else:
+            cnote = "정상"
+    ediag = ei.get("diag") or {}
+    enote = ei.get("skipped")
+    if not enote and verify:
+        if cap:
+            enote = "정상"
+        elif ediag:
+            first = next(iter(ediag.items()), None)
+            fl = (first[1].get("facets") if first else None) or []
+            enote = (ei.get("note") or "배터리 축 미발견")
+            if fl:
+                enote += f" · 첫 라우트 facet: {', '.join(fl[:8])}"
+        else:
+            enote = ei.get("note") or "배터리 축 미발견"
+
     axes = {
-        "census": {"ok": bool(imp_all),
-                   "note": (cen.get("skipped") or
-                            ("행 없음" if not codes_seen else
-                             ("코드 설명 불일치" if not any(
-                                 v.get("matched") for v in (cen.get("codes") or {}).values())
-                              else "정상")) if verify else "미실행")},
-        "eia": {"ok": bool(cap),
-                "note": (ei.get("skipped") or ei.get("note") or
-                         ("정상" if ei.get("found") else "배터리 코드 미발견"))
-                        if verify else "미실행"},
+        "census": {"ok": bool(imp_all), "note": cnote or "미실행"},
+        "eia": {"ok": bool(cap), "note": enote or "미실행"},
     }
     have = bool(imp_all) or bool(cap)
     ser = lambda d: [None if d.get(p) is None else round(d[p], 1) for p in months]
