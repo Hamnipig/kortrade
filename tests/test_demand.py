@@ -58,6 +58,17 @@ def test_attribution_separates_onshoring_from_share_loss():
     assert D.attribute(20.0, 25.0, 31.0, 30.0, 30.0)["code"] == "expanding"
     assert D.attribute(20.0, 25.0, 36.0, 30.0, 30.0)["code"] == "share_gain"
 
+    # ★ 한 축만 들어와도 말할 수 있는 데까지는 말한다.
+    #   Census 키는 2026-05-12 부터 필수가 됐고 발급 메일이 늦는 일이 있어서,
+    #   EIA 키만 먼저 들어오는 상황이 실제로 생긴다.
+    only_eia = D.attribute(-13.0, None, None, None, 35.0)
+    assert only_eia["code"] == "demand_ok_partial", only_eia
+    assert "수요 위축은 아닙니다" in only_eia["note"]
+    assert "구분할 수 없습니다" in only_eia["note"], "구분 불가를 숨기면 안 된다"
+    assert D.attribute(-13.0, None, None, None, -15.0)["code"] == "demand_down"
+    # Census 만 있어도 점유율 판정은 된다 (이게 이 축의 핵심 기여다)
+    assert D.attribute(-13.0, 25.0, 18.0, 30.0, None)["code"] == "share_loss"
+
     # ★ 미국 축이 없으면 **솔직하게 판정 불가**를 내려야 한다. 우기면 안 된다.
     p = D.attribute(-13.0, None, None, None, None)
     assert p["code"] == "partial", p
