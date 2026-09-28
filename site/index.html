@@ -79,7 +79,7 @@ h1{font-size:clamp(21px,3.4vw,29px);line-height:1.15;margin:0;font-weight:700;
 /* 동적으로 채우는 컨테이너. display:contents 가 없으면 이 div 자체가 격자 한 칸을
    차지해 버려서, 안의 패널들은 1/12 폭으로 찌그러지고 옆 패널까지 밀린다.
    (실측: 로테이션 맵이 세로 한 줄로 눌렸다) */
-#nation,#pinned{display:contents}
+#nation,#pinned,#bcharts{display:contents}
 .p6{grid-column:span 6}
 /* 속보 표에서 조업일수에 중립인 유일한 열. 여기를 눈에 먼저 들어오게 한다. */
 .wt th.hicol,.wt td.hicol{background:var(--surface-2)}
@@ -1202,6 +1202,118 @@ const BVCLS = {turnaround:"vd-good", accelerating:"vd-good", bottoming:"vd-loc",
                steady:"vd-na", decelerating:"vd-mix", contracting:"vd-bad",
                expanding:"vd-good", compressing:"vd-bad", flat:"vd-na", unknown:"vd-na"};
 
+/* ── 2차전지 시각화 ────────────────────────────────────────────────────────
+   이 탭은 분석은 다 하고 있었는데 **표만 있어서 한눈에 안 들어왔다.** 화장품 탭이
+   로테이션 맵·지수·추이 3종으로 읽히는 것과 같은 자리를 만든다.
+
+   다만 축은 다르다. 화장품의 축은 '어느 카테고리가 몫을 가져가나'(성장률 × 비중변화)이고,
+   2차전지의 축은 **'사이클 어디에 있나'(성장률 × 가속)** 이다. 이 산업은 비중 싸움이
+   아니라 증설–가동–재고 사이클이 문제라서, 부호가 바뀌는 자리(턴어라운드)가 핵심이다.
+   ────────────────────────────────────────────────────────────────────────── */
+const BSCOL = {final:"--s1", component:"--s2", material:"--s3", equipment:"--s4"};
+const BACL = {x:[-60,120], y:[-70,70]};   // 극단값은 가장자리로 밀고 점선으로 표시만 바꾼다
+
+// 단계 롤업이 아니라 **품목**을 찍는다. 롤업만 보면 한 단계 안에서 갈리는 품목을 못 본다
+// (실측: 체인 합계 +13% 인데 ESS셀은 −13% 였다).
+const batteryItems = B => (B.stages||[]).flatMap(s =>
+  (s.items||[]).map(i => Object.assign({}, i, {stage:s.stage})));
+
+function drawAccelMap(mount, B){
+  const W=620,H=420,M={t:16,r:24,b:44,l:56}, iw=W-M.l-M.r, ih=H-M.t-M.b;
+  const pts = batteryItems(B).filter(r=>r.yoy!=null && r.accel!=null && r.usd>0);
+  if (pts.length < 2){
+    mount.innerHTML='<p class="pnote">전년 동기 비교가 가능한 12개월 이상 데이터가 아직 없습니다.</p>';
+    return;
+  }
+  const [cx0,cx1]=BACL.x, [cy0,cy1]=BACL.y;
+  const X=v=>M.l+(Math.min(cx1,Math.max(cx0,v))-cx0)/(cx1-cx0)*iw;
+  const Y=v=>M.t+ih-(Math.min(cy1,Math.max(cy0,v))-cy0)/(cy1-cy0)*ih;
+  const maxU=Math.max(...pts.map(p=>p.usd));
+  const R=u=>6+Math.sqrt(Math.max(u,0)/maxU)*38;
+  const s=el("svg",{viewBox:`0 0 ${W} ${H}`,role:"img",
+    "aria-label":"품목별 성장률 대비 가속 사분면 — 턴어라운드 탐지"});
+
+  // 좌상(감소인데 가속 = 턴어라운드)을 강조한다. 투자 타이밍이 만들어지는 칸이다.
+  s.appendChild(el("rect",{x:M.l,y:M.t,width:Math.max(0,X(0)-M.l),
+    height:Math.max(0,Y(0)-M.t),fill:cv("--s4"),opacity:.07}));
+  // 우하(성장인데 감속 = 피크 주의)
+  s.appendChild(el("rect",{x:X(0),y:Y(0),width:Math.max(0,M.l+iw-X(0)),
+    height:Math.max(0,M.t+ih-Y(0)),fill:cv("--crit"),opacity:.05}));
+
+  [-50,-25,0,25,50].filter(v=>v>cy0&&v<cy1).forEach(v=>{
+    s.appendChild(el("line",{x1:M.l,x2:M.l+iw,y1:Y(v),y2:Y(v),class:v===0?"ax":"gl"}));
+    s.appendChild(Object.assign(el("text",{x:M.l-8,y:Y(v)+3.5,class:"tk","text-anchor":"end"}),
+      {textContent:(v>0?"+":"")+v+"%p"}));
+  });
+  [-50,0,50,100].filter(v=>v>=cx0&&v<=cx1).forEach(v=>{
+    s.appendChild(el("line",{y1:M.t,y2:M.t+ih,x1:X(v),x2:X(v),class:v===0?"ax":"gl"}));
+    s.appendChild(Object.assign(el("text",{x:X(v),y:M.t+ih+16,class:"tk","text-anchor":"middle"}),
+      {textContent:(v>0?"+":"")+v+"%"}));
+  });
+  const quad=(x,y,t,a)=>s.appendChild(Object.assign(
+    el("text",{x,y,class:"quad","text-anchor":a}),{textContent:t}));
+  quad(M.l+4,      M.t+13,   "감소 → 가속 · 턴어라운드", "start");
+  quad(M.l+iw-4,   M.t+13,   "성장 → 가속", "end");
+  quad(M.l+4,      M.t+ih-6, "감소 → 감속 · 악화", "start");
+  quad(M.l+iw-4,   M.t+ih-6, "성장 → 감속 · 피크 주의", "end");
+  s.appendChild(Object.assign(el("text",{x:M.l+iw/2,y:H-6,class:"tk","text-anchor":"middle"}),
+    {textContent:`최근 ${B.window}개월 YoY →`}));
+  s.appendChild(Object.assign(el("text",{x:14,y:M.t+ih/2,class:"tk","text-anchor":"middle",
+    transform:`rotate(-90 14 ${M.t+ih/2})`}),{textContent:`가속 (최근 ${B.recent}M − ${B.window}M, %p)`}));
+
+  const placed=[];
+  pts.slice().sort((a,b)=>b.usd-a.usd).forEach(p=>{
+    const x=X(p.yoy), y=Y(p.accel), r=R(p.usd);
+    const out = p.yoy<cx0||p.yoy>cx1||p.accel<cy0||p.accel>cy1;
+    const c = cv(BSCOL[p.stage]||"--s5");
+    const g = el("g",{});
+    g.appendChild(el("circle",{cx:x,cy:y,r:r+2,fill:cv("--surface")}));
+    g.appendChild(el("circle",{cx:x,cy:y,r,fill:c,opacity:out?.25:.5,
+      stroke:c,"stroke-width":out?2:1.5,"stroke-dasharray":out?"3 2":""}));
+    g.style.cursor="pointer";
+    g.addEventListener("mousemove", e=>showTip(e,
+      `<b>${esc(p.label)}</b> <span class="tk">${esc(p.code)}</span><br>`+
+      `${esc(BSTAGE[p.stage]||p.stage)} · $${fm(p.usd)}M<br>`+
+      `${B.window}M YoY ${pct(p.yoy)} → 최근 ${B.recent}M ${pct(p.recentYoy)}<br>`+
+      `가속 ${p.accel>0?"+":""}${p.accel}%p · ${esc(p.verdict?.label||"")}`+
+      (out?"<br>※ 축 범위 밖(점선)":"")));
+    g.addEventListener("mouseleave", hideTip);
+    s.appendChild(g);
+    if (r >= 12){
+      const txt = p.label.length>9 ? p.label.slice(0,8)+"…" : p.label;
+      const w = [...txt].reduce((a,ch)=>a+(/[ㄱ-힝]/.test(ch)?11.2:6),0)+6;
+      const free=(lx,ly)=> lx-w/2>M.l+2 && lx+w/2<M.l+iw-2 && ly>M.t+10 && ly<M.t+ih-4 &&
+        !placed.some(q=>Math.abs(q.x-lx)<(q.w+w)/2+8 && Math.abs(q.y-ly)<15) &&
+        !pts.some(o=>o!==p && Math.abs(X(o.yoy)-lx)<w/2+R(o.usd) &&
+                     Math.abs(Y(o.accel)-ly)<R(o.usd)+5);
+      let put=null;
+      for (const dy of [-(r+7), r+15, -(r+21), r+29]){ if(free(x,y+dy)){put={x,y:y+dy};break;} }
+      if (put) { s.appendChild(Object.assign(el("text",{x:put.x,y:put.y,class:"dlab",
+        "text-anchor":"middle"}),{textContent:txt})); placed.push({x:put.x,y:put.y,w}); }
+    }
+  });
+  mount.replaceChildren(s);
+}
+
+/* 완제품 vs 부품·소재 지수. 화장품의 '기초 vs 그 외'와 같은 자리다.
+   두 선이 벌어지면 그게 현지화다 — 완제품은 눕는데 상류가 계속 크는 그림. */
+function batteryIndex(B){
+  const sm = {}; (B.stages||[]).forEach(s => sm[s.stage] = s.m || []);
+  const n = (B.months||[]).length;
+  const fin = [], up = [];
+  for (let i=0;i<n;i++){
+    fin.push(+(sm.final?.[i] || 0));
+    up.push(+((sm.component?.[i] || 0) + (sm.material?.[i] || 0)));
+  }
+  // 기준월은 **둘 다 0 이 아닌 첫 달**로 잡는다. 0 으로 나누면 계열이 통째로 사라진다.
+  let b = -1;
+  for (let i=0;i<n;i++) if (fin[i] > 0 && up[i] > 0) { b = i; break; }
+  if (b < 0) return null;
+  return {base: B.months[b],
+          fin: fin.map((v,i)=> i<b ? null : +(v/fin[b]*100).toFixed(1)),
+          up:  up.map((v,i)=> i<b ? null : +(v/up[b]*100).toFixed(1))};
+}
+
 function drawSpread(mount, sp, months){
   const W=760,H=240,M={t:16,r:20,b:34,l:52}, iw=W-M.l-M.r, ih=H-M.t-M.b;
   const pts = (sp.series||[]).map((x,i)=>({i,x})).filter(p=>p.x!=null);
@@ -1226,6 +1338,126 @@ function drawSpread(mount, sp, months){
   s.appendChild(Object.assign(el("text",{x:X(last.i)-6,y:Y(last.x)-9,class:"dlab","text-anchor":"end"}),
     {textContent:last.x.toFixed(2)+"$/kg"}));
   mount.innerHTML=""; mount.appendChild(s);
+}
+
+/* 이 탭의 첫 화면. 표로 답하던 것을 그림으로 먼저 답한다 —
+   ① 어느 품목이 사이클 어디에 있나 ② 완제품과 상류가 벌어지고 있나
+   ③ 단계별로 무엇이 크고 무엇이 꺾였나. */
+function renderBatteryCharts(B){
+  const host = document.getElementById("bcharts");
+  if (!host) return;
+  const idx = batteryIndex(B);
+  const items = batteryItems(B);
+  const turn = items.filter(r=>r.yoy!=null && r.accel!=null && r.yoy<0 && r.accel>0)
+                    .sort((a,b)=>b.usd-a.usd);
+  const peak = items.filter(r=>r.yoy!=null && r.accel!=null && r.yoy>0 && r.accel<-10)
+                    .sort((a,b)=>b.usd-a.usd);
+  const chips = (B.stages||[]).map(s=>
+    `<span class="lg"><span class="sw" style="background:var(${BSCOL[s.stage]||"--s5"})"></span>${
+      esc(BSTAGE[s.stage]||s.stage)}</span>`).join("");
+
+  host.innerHTML = `
+    <section class="panel p7">
+      <div class="phead"><h2 class="ptitle">사이클 맵</h2>
+        <span class="unit">버블 = 최근 ${B.window}개월 규모</span></div>
+      <p class="pnote">가로축은 성장률, 세로축은 <b>가속</b>(최근 ${B.recent}개월 YoY − ${B.window}개월 YoY).
+        <b>왼쪽 위가 턴어라운드</b>입니다 — 아직 마이너스지만 속도가 붙은 자리.
+        오른쪽 아래는 성장 중인데 꺾이는 중이라 피크를 의심할 자리입니다.</p>
+      <div class="legend">${chips}</div>
+      <div id="bmap"></div>
+    </section>
+    <section class="panel p5">
+      <div class="phead"><h2 class="ptitle">완제품 vs 부품·소재</h2>
+        <span class="unit">${idx?esc(idx.base)+" = 100 · 3개월 이동평균":"—"}</span></div>
+      <p class="pnote">두 선이 <b>벌어지면 현지화</b>입니다 — 완제품은 눕는데 부품·소재가 계속 크는
+        그림이면, 수요가 준 게 아니라 조립이 해외로 간 것입니다. 같이 빠지면 진짜 수요 위축입니다.</p>
+      <div class="legend">
+        <span class="lg"><span class="sw" style="background:var(--s1)"></span>완제품(셀)</span>
+        <span class="lg"><span class="sw" style="background:var(--s3)"></span>부품+소재</span></div>
+      <div id="bidx"></div>
+      ${turn.length||peak.length ? `<div class="sig" style="margin-top:14px">
+        <div class="sigcard${turn.length?"":" empty-c"}"><h4>턴어라운드 후보</h4>
+          <div class="sub">감소 중인데 가속</div>
+          <ol>${turn.length?turn.slice(0,3).map(r=>`<li><span class="nm">${esc(r.label)}</span>
+            <span class="vl up">${pct(r.yoy)} → ${pct(r.recentYoy)}</span></li>`).join("")
+            :"<li>없음</li>"}</ol></div>
+        <div class="sigcard${peak.length?"":" empty-c"}"><h4>피크 주의</h4>
+          <div class="sub">성장 중인데 10%p 넘게 감속</div>
+          <ol>${peak.length?peak.slice(0,3).map(r=>`<li><span class="nm">${esc(r.label)}</span>
+            <span class="vl down">${pct(r.yoy)} → ${pct(r.recentYoy)}</span></li>`).join("")
+            :"<li>없음</li>"}</ol></div>
+      </div>` : ""}
+    </section>
+    <section class="panel p12">
+      <div class="phead"><h2 class="ptitle">단계별 월별 추이</h2>
+        <span class="unit">백만 USD · 3개월 이동평균</span></div>
+      <p class="pnote">장비(CAPEX)가 먼저 움직이고 소재·완제품이 따라옵니다. 범례를 눌러 계열을
+        켜고 끌 수 있습니다. <b>장비는 수요가 아니라 증설의 흐름</b>이라 체인 합계에서는 빼고 셉니다.</p>
+      <div class="legend" id="lg-bst"></div>
+      <div id="bstage"></div>
+    </section>`;
+
+  drawAccelMap(document.getElementById("bmap"), B);
+
+  if (idx){
+    lineChart(document.getElementById("bidx"), B.months,
+      [{name:"완제품", c:"--s1", v:ma3(idx.fin)},
+       {name:"부품+소재", c:"--s3", v:ma3(idx.up)}],
+      {w:520,h:250,padR:62,label:"완제품 vs 부품·소재 지수",
+       fmtY:v=>Math.round(v), fmtT:v=>v.toFixed(0)});
+  } else {
+    document.getElementById("bidx").innerHTML =
+      '<p class="pnote">완제품과 부품·소재가 함께 잡히는 달이 없어 지수를 만들 수 없습니다.</p>';
+  }
+
+  const ser = (B.stages||[]).map(s=>({name:BSTAGE[s.stage]||s.stage,
+    c:BSCOL[s.stage]||"--s5", v:ma3(s.m||[]), off:false}));
+  const draw = () => lineChart(document.getElementById("bstage"), B.months, ser,
+    {w:980,h:270,padR:96,zero:true,label:"단계별 월별 수출 추이",
+     fmtY:v=>"$"+Math.round(v)+"M", fmtT:v=>"$"+v.toFixed(1)+"M"});
+  const lg = document.getElementById("lg-bst");
+  lg.innerHTML = ser.map((s,i)=>`<button class="lg" type="button" data-i="${i}"
+    aria-pressed="true"><span class="sw" style="background:var(${s.c})"></span>${esc(s.name)}</button>`).join("");
+  lg.addEventListener("click", e=>{
+    const b=e.target.closest(".lg"); if(!b) return;
+    const i=+b.dataset.i;
+    if (ser.filter(s=>!s.off).length===1 && !ser[i].off) return;   // 전부 끄면 빈 축이 남는다
+    ser[i].off=!ser[i].off;
+    b.setAttribute("aria-pressed", String(!ser[i].off));
+    draw();
+  });
+  draw();
+}
+
+/* 시장별 현지화지수 추이. 표의 '0.70 → 1.56' 두 점만으로는 전환이 **언제** 시작됐는지
+   알 수 없다. 현지화는 국가 단위로 일어나므로 전체 합계만 보면 미국 전환이 유럽 증가에 묻힌다. */
+function drawLocTrend(mount, legend, B){
+  if (!mount) return;
+  const live = (B.markets||[]).filter(m => (m.mLoc||[]).filter(x=>x!=null).length >= 6)
+                              .slice(0, 5);
+  if (live.length < 1){
+    mount.innerHTML = '<p class="pnote">현지화지수를 그릴 만큼의 월별 데이터가 아직 없습니다.</p>';
+    if (legend) legend.innerHTML = "";
+    return;
+  }
+  const ser = live.map((m,i)=>({name: m.market==="ALL"?"전체":m.market,
+                                c: SER[i % SER.length], v: ma3(m.mLoc), off:false}));
+  const draw = () => lineChart(mount, B.months, ser,
+    {w:980,h:250,padR:76,zero:true,label:"시장별 현지화지수 추이",
+     fmtY:v=>v.toFixed(1), fmtT:v=>v.toFixed(2)});
+  if (legend){
+    legend.innerHTML = ser.map((s,i)=>`<button class="lg" type="button" data-i="${i}"
+      aria-pressed="true"><span class="sw" style="background:var(${s.c})"></span>${esc(s.name)}</button>`).join("");
+    legend.addEventListener("click", e=>{
+      const b=e.target.closest(".lg"); if(!b) return;
+      const i=+b.dataset.i;
+      if (ser.filter(s=>!s.off).length===1 && !ser[i].off) return;
+      ser[i].off=!ser[i].off;
+      b.setAttribute("aria-pressed", String(!ser[i].off));
+      draw();
+    });
+  }
+  draw();
 }
 
 function renderBattery(){
@@ -1265,6 +1497,7 @@ function renderBattery(){
       <b>사이클을 끌고 있는 단계</b>를 봅니다.</p>
 
     <div class="panels">
+      <div id="bcharts"></div>
       <div class="panel p12">
         <div class="phead"><h3 class="ptitle">마진 프록시 — 원가로 설명되지 않는 판가</h3>
           <span class="unit">회귀 잔차 $/kg</span></div>
@@ -1363,6 +1596,8 @@ function renderBattery(){
         <p class="pnote">현지화지수는 <b>최근 ${BAT.recent}개월 기준</b>을 씁니다. 8개월 평균은
           전환 초기를 뭉갭니다 — 실측에서 8개월 기준은 0.67→0.84(1.25배)로 문턱을 못 넘었지만
           3개월 기준은 0.70→1.56(2.2배)로 명확히 잡혔습니다.</p>
+        <div class="legend" id="lg-bloc"></div>
+        <div id="bloc"></div>
         <div class="tscroll"><table class="wt"><thead><tr>
           <th class="l">시장</th><th>완제품 $M</th><th>YoY</th>
           <th>부품·소재 $M</th><th>YoY</th><th>체인 합계 $M</th><th>YoY</th>
@@ -1442,7 +1677,9 @@ function renderBattery(){
       마진은 추정하지 않습니다. ③ 동박·알루미늄박·전해액은 이미 해외 현지생산 비중이
       커서 한국 수출로는 기업 실적을 과소평가합니다. ④ 코드 순도가 <code>low</code> 인
       품목은 무관한 물량이 섞이므로 절대 수준이 아니라 <b>추세</b>로만 읽으세요.</div>`;
+  renderBatteryCharts(BAT);
   if (sp.linked) drawSpread(document.getElementById("bspread"), sp, BAT.months);
+  drawLocTrend(document.getElementById("bloc"), document.getElementById("lg-bloc"), BAT);
 }
 
 /* ================= 밸류체인 (해외 현지생산 보정) ================= */
@@ -1789,7 +2026,16 @@ Promise.allSettled([getJSON("data/manifest.json"), getJSON("data/watchlist.json"
     const want = location.hash.slice(1);
     const known = want === SCAN_KEY || (BAT && want === BAT_KEY)
       || (m.sectors||[]).some(s=>s.key===want && s.ready);
-    selectTab(known ? want : ((WATCH||UNI||FLASH) ? SCAN_KEY : ready[0].key));
+    // ★ ready[0].key 로 바로 가면, 섹터 수집이 실패해 ready 가 비었을 때
+    //   undefined.key 로 페이지 전체가 죽는다 (배터리 데이터만 있어도 마찬가지였다).
+    //   살아 있는 레이어를 순서대로 찾아 떨어지고, 아무것도 없으면 안내를 띄운다.
+    const fallback = (WATCH||UNI||FLASH) ? SCAN_KEY
+                   : (BAT ? BAT_KEY : (ready[0] ? ready[0].key : null));
+    if (known || fallback) selectTab(known ? want : fallback);
+    else document.getElementById("view").innerHTML =
+      `<div class="empty"><h3>아직 수집된 데이터가 없습니다</h3>
+        <p>수집이 한 번도 성공하지 않았거나 <code>site/data/</code> 가 비어 있습니다.
+          GitHub Actions 의 <b>Update trade data</b> 워크플로를 실행하세요.</p></div>`;
   });
 
 const reflow = () => {
