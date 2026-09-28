@@ -19,7 +19,8 @@ from kortrade.client import (CustomsAPIError, chunk_periods, month_range,
 from kortrade.collect import latest_available_yymm, shift_yymm
 from kortrade.store import Store
 
-CONFIG = Path(__file__).resolve().parent.parent / "config"
+REPO = Path(__file__).resolve().parent.parent
+CONFIG = REPO / "config"
 import yaml
 API_CFG = yaml.safe_load((CONFIG / "api.yaml").read_text(encoding="utf-8"))
 SIGUNGU_FIELDS = API_CFG["endpoints"]["sigungu_item"]["item_fields"]
@@ -693,6 +694,65 @@ def test_regions_config_is_evidence_based():
         assert r.get("evidence") and r.get("before") and r.get("after")
     assert regions.breaks(), "단절 구간이 하나도 등록돼 있지 않다"
     print("  ✓ 개편 매핑에 실측 근거 강제")
+
+
+def test_binary_db_conflict_is_merged_not_rebased():
+    """바이너리 DB 충돌을 git 이 아니라 SQLite 레벨에서 푸는지.
+
+    2026-09-28 실측 사고
+        update.yml 과 flash.yml 이 같은 data/kortrade.sqlite 를 같은 브랜치에 커밋한다.
+        상대가 먼저 push 하면 `git pull --rebase` 가 이렇게 죽었다:
+
+            warning: Cannot merge binary files: data/kortrade.sqlite
+            CONFLICT (content): Merge conflict in data/kortrade.sqlite
+            fatal: You are not currently on a branch.
+            Error: Process completed with exit code 128
+
+        sqlite 는 텍스트 merge 가 **원리적으로** 불가능하다. 한쪽을 버리면
+        버린 쪽이 방금 쓴 수백~수천 API 콜이다. 그래서 행 단위로 합친다.
+    """
+    import importlib.util, sqlite3, tempfile
+    from pathlib import Path as _P
+    from kortrade.store import Store as _S
+
+    spec = importlib.util.spec_from_file_location("md", REPO / "scripts" / "merge_db.py")
+    md = importlib.util.module_from_spec(spec); spec.loader.exec_module(md)
+
+    td = _P(tempfile.mkdtemp())
+    mine, remote = td / "mine.sqlite", td / "remote.sqlite"
+    row = lambda pr, code, v: dict(period=pr, hs_code=code, hs6=code[:6], hs_name="x",
+                                   country_code="ALL", country_name="ALL", exp_usd=v,
+                                   exp_wgt=1, imp_usd=0, imp_wgt=0, bal_usd=0)
+    with _S(mine) as st:
+        st.upsert_sector([row("2026-01", "8507603000", 100), row("2026-02", "8507603000", 200)])
+    with _S(remote) as st:
+        st.upsert_sector([row("2026-01", "8507603000", 999),   # 충돌
+                          row("2026-03", "8507603000", 300)])  # 원격에만
+        st.upsert_flash([{"period": "2026-02", "seq": 1, "kind": "item", "slot": "00",
+                          "dt": "01~10", "day_to": 10, "exp_usd": 5}])
+    md.merge(mine, remote)
+
+    c = sqlite3.connect(mine)
+    # ★ 충돌 행은 **이번 실행이 방금 수집한 값**이 이긴다
+    assert c.execute("SELECT exp_usd FROM sector_trade WHERE period='2026-01'"
+                     ).fetchone()[0] == 100
+    # ★ 상대에만 있던 행은 잃지 않는다 (그게 상대가 쓴 API 콜이다)
+    assert c.execute("SELECT COUNT(*) FROM sector_trade WHERE period='2026-03'").fetchone()[0] == 1
+    assert c.execute("SELECT COUNT(*) FROM flash_trade").fetchone()[0] == 1
+    c.close()
+
+    # 워크플로가 실제로 이 경로를 쓰는지 — rebase 가 되살아나면 같은 사고가 난다
+    sh = (REPO / "scripts" / "commit_push.sh").read_text(encoding="utf-8")
+    assert "merge_db.py" in sh and "reset --hard" in sh
+    # 주석은 사고 경위를 설명하느라 rebase 를 언급한다 — **실행되는 줄**만 본다
+    code = "\n".join(l for l in sh.splitlines() if not l.lstrip().startswith("#"))
+    assert "pull --rebase" not in code, "바이너리 DB 에 rebase 를 다시 쓰고 있다"
+    for wf in (".github/workflows/update.yml", ".github/workflows/flash.yml"):
+        w = (REPO / wf).read_text(encoding="utf-8")
+        assert "commit_push.sh" in w, f"{wf} 가 안전한 커밋 경로를 안 쓴다"
+        wc = "\n".join(l for l in w.splitlines() if not l.lstrip().startswith("#"))
+        assert "pull --rebase" not in wc, f"{wf} 에 rebase 가 되살아났다"
+    print("  ✓ 바이너리 DB 충돌 — 행 단위 병합(내 값 우선, 상대 행 보존)")
 
 
 def main() -> int:
