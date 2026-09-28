@@ -1,0 +1,109 @@
+# 최종 수요 축 — 한국 수출이 줄었을 때 **무슨 일이 일어난 것인지** 가른다
+#
+# 문제 (이 프로젝트가 반복해서 부딪힌 것)
+#   대미 ESS 셀 수출이 −13% 였다. 세 가지 중 무엇인가?
+#     (a) 미국 ESS 수요 자체가 줄었다
+#     (b) 한국 기업이 미국 현지에서 만들기 시작했다 (통관에서 사라진다)
+#     (c) 시장은 크는데 한국이 중국에 점유율을 뺏겼다
+#   현지화지수((부품+소재)/완제품)는 (a)와 (b)를 부분적으로 가른다.
+#   **(c)는 통관 수출 데이터만으로는 원리적으로 볼 수 없다.** 한국 수출만 보고 있으면
+#   미국 시장이 두 배로 커졌는지 반토막 났는지 알 방법이 없기 때문이다.
+#
+# 해법 — 축을 두 개 더 세운다 (합치지 않는다, 나란히 놓는다)
+#   ① 미국 BESS **수입** (미국 Census)  → 시장 규모 + 한국 점유율   → (c) 를 본다
+#   ② 미국 배터리 저장 **설치·가동 용량** (EIA) → 최종 수요          → (a) 를 본다
+#   한국 수출 (관세청)                                              → 이미 있다
+#
+# ★ 절대 합산하지 않는다. 단위가 다르고(달러 vs GW) 출처가 다르고 갱신주기가 다르다.
+#   방향과 증감률만 나란히 놓고 대조한다. 합치는 순간 근거 없는 '글로벌 공급량'이 된다.
+#
+# ★ 중량 → GWh 환산도 하지 않는다. HS 8507.60 은 셀·모듈·시스템이 섞여 있어
+#   kg 당 에너지밀도가 제품마다 다르다. 환산하면 그 가정이 결과를 만든다.
+
+version: "2026-09-28"
+
+# 비교창은 배터리 레이어와 맞춘다 (config/battery.yaml 의 window/recent)
+window: 8
+recent: 3
+hist: 40
+
+# ══════════════════════════════════════════════════════════════════════════
+# ① 미국 수입 — US Census International Trade API
+#
+#   https://api.census.gov/data/timeseries/intltrade/imports/hs
+#   무료 키 필요(CENSUS_API_KEY). 2010-01 부터. 월별. 매월 보도자료일에 갱신되고
+#   **4월 통계 공표 때 과거치가 연례 개정**된다 → 최근 구간 재수집 필요.
+#
+#   왜 미국 수입인가: 같은 물건을 반대편에서 본 숫자다. 그런데 미국 HTS 는
+#   한국 HSK 에 없는 **컨테이너형 BESS 전용 통계품목**을 갖고 있다.
+#     8507600030  Battery energy storage systems fully encased within a housing
+#     8507600010  승용 EV(8703.40~80)용 주동력 배터리
+#     8507600090  기타 (셀·모듈·상용차/이륜 팩이 전부 여기로 떨어진다)
+#   → ESS 시스템만 따로 셀 수 있다. 한국 수출통계로는 못 하는 일이다.
+#
+#   ※ 코드 출처가 Flexport 의 HTS 트리다. USITC(hts.usitc.gov)는 JS 렌더라
+#     직접 확인하지 못했다. 그래서 **draft 로 잠가 두고**, run_demand.py 가
+#     실제 호출해서 돌아오는 I_COMMODITY_SDESC 를 data/demand_verify.json 에
+#     기록한 뒤에만 active 로 쓴다. 설명이 안 맞으면 자동으로 안 쓴다.
+us_imports:
+  enabled: true
+  dataset: "timeseries/intltrade/imports/hs"
+  # 한국. 출처: census.gov/foreign-trade/balance/c5800.html "Trade in Goods with Korea, South"
+  partner: "5800"
+  codes:
+    - code: "8507600030"
+      label: 컨테이너형 ESS(외함 수납)
+      status: draft
+      expect: "storage"          # 응답 설명에 이 문자열이 있어야 승격
+      why: 한국 HSK 에 없는 시스템 단위 분류. ESS 시스템 수요를 셀과 분리해 볼 수 있다
+    - code: "8507600010"
+      label: 승용 EV 배터리
+      status: draft
+      expect: "vehicle"
+      why: EV 와 ESS 를 미국 쪽에서 분리. 한국 8507602000 과 대조해 정합성 점검
+    - code: "8507600090"
+      label: 기타(셀·모듈 등)
+      status: draft
+      expect: "other"
+      why: 셀·모듈이 여기로 온다. 단 상용차·이륜 팩도 섞이므로 순수 셀 프록시가 아니다
+
+# ══════════════════════════════════════════════════════════════════════════
+# ② 미국 설치·가동 용량 — EIA Open Data API v2
+#
+#   https://api.eia.gov/v2/... 무료 키 필요(EIA_API_KEY). 요청당 5,000행 상한.
+#   ★ 응답의 숫자가 **문자열**로 온다(v2.1.6부터). 그대로 더하면 문자열 연결이 된다.
+#
+#   실측 근거 (EIA Today in Energy, 2026-08-07):
+#     2025년말 가동 43.6GW → 2026 상반기 +8.3GW → 2026-06 약 52GW
+#     2026 하반기 계획 14GW · 2027년 26GW · 2028년 14GW
+#     3년 평균 성장률 70%
+#
+#   ★ 한계: **대규모(utility-scale) 발전설비 인벤토리 기준**이다
+#     (Preliminary Monthly Electric Generator Inventory = EIA-860M).
+#     가정용·상업용 배후(behind-the-meter) 저장장치는 안 잡힌다.
+#     그리고 이건 **미국 수요**이지 한국 기업의 공급이 아니다 —
+#     '수요 위축'을 반증할 수는 있어도 '한국이 공급 중'을 증명하지는 못한다.
+#
+#   ※ 라우트와 배터리 연료코드를 문서에서 확정하지 못했다(문서에 코드표가 없다).
+#     run_demand.py 가 facet 엔드포인트를 훑어 설명에 'batter' 가 들어간 코드를
+#     찾아 data/demand_verify.json 에 적는다. 못 찾으면 이 축은 그냥 비운다.
+us_capacity:
+  enabled: true
+  routes:
+    - "electricity/operating-generator-capacity"
+    - "electricity/electric-power-operational-data"
+    - "electricity/electricity-power-operational-data"   # 문서 표기 흔들림 대비
+  facet_candidates: ["energy_source_code", "fueltypeid", "fuelid"]
+  match: "batter"
+  # 가동 중만 센다. 계획(planned)을 섞으면 '설치됐다'가 아니라 '설치할 것이다'가 된다.
+  status_filter: ["OP"]
+
+# ══════════════════════════════════════════════════════════════════════════
+# 판정 문턱
+thresholds:
+  # 증감률이 이 안이면 '보합'. 부호만 보면 매달 결론이 뒤집힌다.
+  flat_pct: 5.0
+  # 점유율 변화가 이 %p 이상이면 유의미한 이동으로 본다
+  share_pp: 3.0
+  # 이 금액 미만 구간은 비율을 내지 않는다 (달러)
+  min_base_usd: 20000000
