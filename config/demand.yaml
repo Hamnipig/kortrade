@@ -95,21 +95,36 @@ us_imports:
 #     찾아 data/demand_verify.json 에 적는다. 못 찾으면 이 축은 그냥 비운다.
 us_capacity:
   enabled: true
+  # ★ 2026-09-29 실호출로 확정 (GET /v2/electricity/operating-generator-capacity).
+  #   응답 메타데이터 그대로:
+  #     name        : "Inventory of Operable Generators"  (Forms EIA-860, EIA-860M)
+  #     frequency   : monthly 하나뿐 · startPeriod 2008-01 · endPeriod 2026-07
+  #     facets      : stateid, sector, entityid, plantid, generatorid, unit,
+  #                   technology, energy_source_code, prime_mover_code,
+  #                   balancing_authority_code, status
+  #     data        : nameplate-capacity-mw, net-summer-capacity-mw,
+  #                   net-winter-capacity-mw, operating-year-month, county, ...
+  #
+  #   → 라우트·컬럼·주기는 이제 추측이 아니다. 남은 미확정은 **배터리 facet 값** 하나다
+  #     (technology = "Batteries" 로 추정, energy_source_code = "MWH" 로 추정).
+  #     그래서 그 값만 여전히 자동 탐색한다.
+  #
+  #   ※ 이 표는 '운전 중'이 아니라 **가동 가능 발전기 인벤토리**다. 계획·폐지 설비가
+  #     함께 들어 있으므로 status 로 걸러야 '설치됐다'가 된다.
   routes:
     - "electricity/operating-generator-capacity"
     - "electricity/electric-power-operational-data"
     - "electricity/electricity-power-operational-data"   # 문서 표기 흔들림 대비
-  # ★ 'batter' 하나로 찾으면 못 찾는다 (2026-09-28 실측).
-  #   EIA-860M 에서 배터리를 가리키는 축은 둘인데 표기가 전혀 다르다:
-  #     technology          = "Batteries"                     ← 'batter' 로 잡힌다
-  #     energy_source_code  = "MWH" / "Electricity used for energy storage"
-  #                                                           ← 'batter' 로 **안 잡힌다**
-  #   그래서 technology 를 후보 맨 앞에 두고, 매칭어에 'storage' 와 코드 'MWH' 를 더한다.
+  # 배터리를 가리키는 축이 둘인데 표기가 전혀 다르다:
+  #   technology         = "Batteries"                     ← 'batter' 로 잡힌다
+  #   energy_source_code = "MWH" / "Electricity used for energy storage"
+  #                                                        ← 'batter' 로 **안 잡힌다**
   facet_candidates: ["technology", "technology_description", "energy_source_code",
                      "fueltypeid", "fuelid", "energy_source"]
   match_any: ["batter", "storage"]
   match_codes: ["MWH", "BAT", "ESS"]
   # 가동 중만 센다. 계획(planned)을 섞으면 '설치됐다'가 아니라 '설치할 것이다'가 된다.
+  # status 코드는 미확정이라, 이걸로 0행이 나오면 수집기가 필터를 빼고 한 번 더 받는다.
   status_filter: ["OP"]
 
 # ══════════════════════════════════════════════════════════════════════════
