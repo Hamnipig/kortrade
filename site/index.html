@@ -1214,7 +1214,7 @@ const BSCOL = {final:"--s1", component:"--s2", material:"--s3", equipment:"--s4"
 // 최종 수요 판정 — '현지화'와 '점유율 상실'은 한국 수출을 똑같이 줄이지만
 // 투자 판단이 정반대다. 색으로 먼저 갈라 준다.
 const DVCLS = {share_loss:"vd-bad", demand_down:"vd-bad", onshoring:"vd-loc",
-               demand_ok_partial:"vd-na",
+               demand_ok_partial:"vd-na", level_only:"vd-na",
                expanding:"vd-good", share_gain:"vd-good", mixed:"vd-mix",
                partial:"vd-na", unknown:"vd-na"};
 const BACL = {x:[-60,120], y:[-70,70]};   // 극단값은 가장자리로 밀고 점선으로 표시만 바꾼다
@@ -1393,7 +1393,9 @@ function renderDemand(host, D){
   host.innerHTML = `
     <section class="panel p12">
       <div class="phead"><h2 class="ptitle">최종 수요 대조 — 수출이 줄면 무슨 일인가</h2>
-        <span class="unit">각 계열 첫 달 = 100 · 지수는 비교용, 합산 아님</span></div>
+        <span class="unit">${(D.idx&&D.idx.base!=null&&D.months)
+          ? esc(D.months[D.idx.base])+" = 100 (공통 기준월)" : "지수 비교 불가"}
+          · 비교용, 합산 아님</span></div>
       <p class="pnote">한국 수출만 보면 <b>'현지화'와 '점유율 상실'이 똑같이 보입니다.</b>
         둘 다 수출을 줄이지만 판단은 정반대입니다. 미국 <b>수입</b>이 시장 규모와 우리 몫을,
         미국 <b>설치용량</b>이 최종 수요를 말해 줍니다.
@@ -1417,6 +1419,18 @@ function renderDemand(host, D){
         <td class="${y>0?'up':(y<0?'down':'')}">${y==null?"–":pct(y)}</td>
         <td class="l"><span class="tk" style="display:inline">${src}</span></td></tr>`).join("")}
       </tbody></table></div>
+      ${(D.axes && Object.values(D.axes).some(a=>!a.ok))
+        ? `<div class="warn" style="margin-top:12px"><b>비어 있는 축</b> —
+            ${Object.entries(D.axes).filter(([,a])=>!a.ok).map(([k,a])=>
+              `${k==="census"?"미국 수입(Census)":"미국 설치(EIA)"}: ${esc(a.note||"원인 불명")}`
+            ).join("<br>")}</div>` : ""}
+      ${(D.starts && Object.values(D.starts).some(v=>v))
+        ? `<p class="pnote" style="margin-top:10px"><b>계열별 관측 시작</b> —
+            ${Object.entries(D.starts).filter(([,v])=>v).map(([k,v])=>
+              `${k==="kr"?"한국 수출":(k==="imp"?"미국 수입":"미국 설치")} ${esc(v)}`
+            ).join(" · ")}.
+            시작 시점이 크게 다르면 <b>통계품목 신설</b>일 수 있습니다 —
+            없던 계열이 생긴 것을 '급증'으로 읽지 마십시오.</p>` : ""}
       <div class="warn" style="margin-top:14px"><b>읽을 때 반드시 지킬 것</b> —
         ① <b>세 축을 더하지 마십시오.</b> 단위(달러 vs MW)도, 출처도, 갱신주기도 다릅니다.
         ${(D.sources||[]).map(x=>`<br>　· ${esc(x.name)} — ${esc(x.who)} · ${esc(x.freq)}`).join("")}
@@ -1431,15 +1445,17 @@ function renderDemand(host, D){
         <br>⑤ 기업별 현지 출하량은 통관에도 EIA 에도 없습니다. 최종 확인은
         DART·SEC EDGAR 공시입니다 — 분기 단위라 이 화면과 주기가 다릅니다.</div>
     </section>`;
-  const ser = [];
-  if (idx.kr)  ser.push({name:"한국 수출", c:"--s1", v:ma3(idx.kr)});
-  if (idx.imp) ser.push({name:"미국 수입", c:"--s2", v:ma3(idx.imp)});
-  if (idx.cap) ser.push({name:"미국 설치", c:"--s3", v:ma3(idx.cap)});
   const mount = document.getElementById("bdemchart");
+  const NM = {kr:"한국 수출", imp:"미국 수입", cap:"미국 설치"};
+  const CL = {kr:"--s1", imp:"--s2", cap:"--s3"};
+  const ser = [];
+  if (idx && idx.idx) for (const k of ["kr","imp","cap"])
+    if (idx.idx[k]) ser.push({name:NM[k], c:CL[k], v:ma3(idx.idx[k])});
   if (ser.length) lineChart(mount, D.months||[], ser,
     {w:980,h:260,padR:86,label:"한국 수출 · 미국 수입 · 미국 설치 지수",
      fmtY:v=>Math.round(v), fmtT:v=>v.toFixed(0)});
-  else mount.innerHTML = '<p class="pnote">지수를 만들 만큼의 월별 데이터가 아직 없습니다.</p>';
+  else mount.innerHTML = `<p class="pnote">${esc((idx&&idx.note)||
+    "지수를 만들 만큼의 월별 데이터가 아직 없습니다.")}</p>`;
 }
 
 /* 이 탭의 첫 화면. 표로 답하던 것을 그림으로 먼저 답한다 —
