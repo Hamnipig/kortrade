@@ -45,7 +45,9 @@ ROOT = Path(__file__).resolve().parent.parent
 VERIFY = ROOT / "data" / "demand_verify.json"
 TIMEOUT = 30
 PAGE = 5000        # EIA 요청당 행 상한 (문서 명시)
-MAX_PAGES = 12     # 60,000행까지. 배터리 설비 월별이면 충분하다
+# 이 라우트는 **발전기 x 월** 단위다. 미국 배터리 설비는 2026년 기준 수천 기이고
+# 2021-01~ 이면 월수까지 곱해져 10만 행을 넘는다. 12페이지(6만)로는 최근월이 잘린다.
+MAX_PAGES = 45     # 225,000행까지
 log = logging.getLogger("run_demand")
 
 
@@ -198,8 +200,14 @@ def discover_eia(cfg: D.DemandConfig, key: str) -> tuple[dict | None, dict]:
         for fid in cfg.facet_candidates:
             if fid not in facets:
                 continue
-            fv = _get(f"https://api.eia.gov/v2/{route}/facet/{fid}", {"api_key": key})
+            # ★ EIA 문서 예시는 끝에 **슬래시**가 붙어 있다
+            #   (.../facet/sectorid/?api_key=...). 없으면 404 로 떨어져서
+            #   "배터리 축을 못 찾았다"로 보인다 — 실제로는 부르지도 못한 것이다.
+            fv = _get(f"https://api.eia.gov/v2/{route}/facet/{fid}/", {"api_key": key})
             vals = (fv or {}).get("response", {}).get("facets") or []
+            if not vals:        # 혹시 슬래시 없는 쪽을 받는 라우트가 있으면 대비
+                fv = _get(f"https://api.eia.gov/v2/{route}/facet/{fid}", {"api_key": key})
+                vals = (fv or {}).get("response", {}).get("facets") or []
             # 못 찾았을 때 보라고 값 표본을 남긴다 (너무 길면 화면이 안 읽힌다)
             diag[route]["samples"][fid] = [
                 f"{f.get('id')}={_label(f)}" for f in vals[:25]]
@@ -208,7 +216,7 @@ def discover_eia(cfg: D.DemandConfig, key: str) -> tuple[dict | None, dict]:
                            for m in cfg.match_any)
                     or str(f.get("id", "")).upper() in cfg.match_codes]
             if hits:
-                return ({"route": route, "facet": fid,
+                return ({"route": route, "facet": fid, "all_facets": facets,
                          "ids": [str(h.get("id")) for h in hits],
                          "names": [_label(h) for h in hits],
                          "columns": cols, "frequencies": freqs}, diag)
@@ -235,6 +243,12 @@ def collect_eia(cfg: D.DemandConfig, store: Store, key: str,
         base["frequency"] = freq
     for i, fid in enumerate(found["ids"]):
         base[f"facets[{found['facet']}][{i}]"] = fid
+    # ★ status 를 서버에서 거르면 계획·폐지 설비가 아예 안 와서 행수가 크게 준다
+    #   (이 표는 '운전 중'이 아니라 **가동 가능 발전기 인벤토리**라 계획분도 들어 있다).
+    #   status facet 이 있을 때만 건다. 결과가 0행이면 아래에서 필터 없이 다시 받는다.
+    if cfg.status_filter and "status" in (found.get("all_facets") or []):
+        for i, sc in enumerate(cfg.status_filter):
+            base[f"facets[status][{i}]"] = sc
 
     # ★ 페이지네이션이 반드시 필요하다. 이 라우트는 **발전기 단위**로 돌아오므로
     #   미국 배터리 설비만 해도 월 수천 행이고, EIA 는 요청당 5,000행이 상한이다.
@@ -276,12 +290,30 @@ def collect_eia(cfg: D.DemandConfig, store: Store, key: str,
     if total and got < total:
         log.warning("EIA 응답 %d행 중 %d행만 받았습니다 (MAX_PAGES 상한). "
                     "최근월이 잘렸을 수 있습니다.", total, got)
+
+    # status 코드를 잘못 짚었을 수 있다 — 0행이면 필터를 빼고 한 번만 더 본다.
+    # (틀린 코드로 전부 걸러진 것과 정말 데이터가 없는 것은 다른 이야기다)
+    retried = False
+    if not agg and any(k.startswith("facets[status]") for k in base):
+        retried = True
+        nf = {k: v for k, v in base.items() if not k.startswith("facets[status]")}
+        data = _get(f"https://api.eia.gov/v2/{found['route']}/data", nf)
+        for r in ((data or {}).get("response") or {}).get("data") or []:
+            pp = str(r.get("period", ""))[:7]
+            if len(pp) == 7:
+                try:
+                    agg[pp] = agg.get(pp, 0.0) + float(r.get(col))
+                except (TypeError, ValueError):
+                    pass
+        if agg:
+            log.warning("status=%s 로는 0행이라 필터 없이 받았습니다 — "
+                        "계획 설비가 섞였을 수 있습니다.", cfg.status_filter)
     rows = [{"source": "eia", "series": "capacity", "period": pp, "value": v,
              "unit": "MW"} for pp, v in agg.items()]
     if rows:
         store.upsert_demand(rows)
     return {"rows": len(rows), "found": found, "column": col, "diag": diag,
-            "fetched": got, "total": total,
+            "fetched": got, "total": total, "statusRetry": retried,
             "months": f"{min(agg)}~{max(agg)}" if agg else None}
 
 
