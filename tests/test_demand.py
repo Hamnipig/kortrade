@@ -162,6 +162,11 @@ def test_build_attaches_demand():
             assert next(v for v in ser if v is not None) == 100.0, (k, ser[:3])
     # 갱신주기가 다르다는 사실이 페이로드에 남아 있어야 한다
     assert len(dm["sources"]) == 3 and all(x["freq"] for x in dm["sources"])
+    # ★ 비교창 안에서 실제 관측된 개월수 — 신설 품목은 8개월 창에 6개월치뿐인데
+    #   머리글이 "최근 8개월"이면 8개월 합계로 읽힌다 (2026-09-29 실측).
+    assert dm["kr"]["n"] and dm["imp"]["n"], (dm["kr"].get("n"), dm["imp"].get("n"))
+    # ★ 설치용량은 스톡이라 합계가 아니라 최신 관측 시점 값이고, 그 시점을 밝혀야 한다
+    assert "asOf" in dm["cap"], "설치용량의 기준 시점이 없다"
     print(f"  ✓ 빌드 — 미국 수입 +{dm['imp']['yoy']}% · 한국 점유율 "
           f"{dm['imp']['sharePrev']}% → {dm['imp']['share']}% "
           f"[{dm['verdict']['label']}]")
@@ -271,6 +276,30 @@ def test_collector_never_leaks_key_and_exits_clean():
     assert "LAST" in src and '"status": r.status_code' in src, \
         "상태코드를 안 남기면 '행 없음'과 '파라미터 오류'를 구분할 수 없다"
     print("  ✓ 수집기 — 키 미노출 · 키 없으면 정상 종료 · 코드 자동 발견")
+
+
+def test_ma3_propagates_null():
+    """이동평균이 null 을 0 으로 바꾸면 '데이터 없음'이 '값이 0'으로 그려진다.
+
+    2026-09-29 실측 사고
+        미국 수입 계열은 2026-02 부터인데, 그 앞 구간이 화면에서 **바닥에 붙은
+        평평한 선**으로 나왔다. JS 에서 `null + null + null === 0` 이라
+        ma3 가 없는 구간을 0 으로 만들어 버렸기 때문이다.
+        index() 에서 0 을 None 으로 바꿔 둔 수정이 여기서 통째로 무력화됐다.
+        경계에서도 (null+null+v)/3 = v/3 이라 3개월에 걸쳐 가짜로 차오른다.
+    """
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    i = html.index("const ma3 =")
+    body = html[i:i + 400]
+    assert "w.some(v => v == null)" in body, "ma3 가 null 을 전파하지 않는다"
+    assert "a[i]+a[i-1]+a[i-2]" not in body, "옛 ma3(널을 0으로 만드는 식)가 남아 있다"
+
+    # 지수 차트는 이동평균을 걸지 않아야 기준월이 정확히 100 으로 찍힌다
+    blk = html[html.index("function renderDemand"):]
+    blk = blk[:blk.index("/* 이 탭의 첫 화면")]
+    assert "ma3(idx.idx[k])" not in blk, \
+        "지수 차트에 이동평균이 걸려 기준월이 100 으로 안 찍힌다"
+    print("  ✓ 이동평균 null 전파 · 지수 차트는 평활 없음")
 
 
 def test_wired_into_site_and_workflow():
