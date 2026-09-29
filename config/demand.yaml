@@ -56,6 +56,12 @@ us_imports:
       status: draft
       expect: "storage"          # 응답 설명에 이 문자열이 있어야 승격
       why: 한국 HSK 에 없는 시스템 단위 분류. ESS 시스템 수요를 셀과 분리해 볼 수 있다
+      # ★ 2026-09-28 실호출로 **확인됨**. 응답 I_COMMODITY_SDESC:
+      #   "BATTERY ENERGY STORAGE SYSTEMS, AS IN STAT NOTE 2"
+      #   Flexport 의 HTS 트리에서 가져온 코드였는데 실제 Census 응답과 일치했다.
+      # ※ 다만 관측 구간이 2026년부터다 — **최근 신설된 통계품목**으로 보인다.
+      #   전년 동기가 없어 YoY·점유율 변화는 12개월이 쌓여야 나온다.
+      #   그때까지는 '수준만 관측' 판정으로 떨어지는 것이 정상이다.
     - code: "8507600010"
       label: 승용 EV 배터리
       status: draft
