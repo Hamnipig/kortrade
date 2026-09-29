@@ -248,8 +248,26 @@ def test_collector_never_leaks_key_and_exits_clean():
     assert "MWH" in cfg.match_codes, "배터리 에너지원 코드 MWH 를 코드로도 봐야 한다"
     assert cfg.facet_candidates[0] == "technology", \
         "technology 가 'Batteries' 로 잡히는 유일한 축이라 맨 앞이어야 한다"
+    # 2026-09-29 실호출로 확정된 라우트. 되돌아가면 안 된다.
+    assert cfg.routes[0] == "electricity/operating-generator-capacity", cfg.routes[0]
+    ycfg = (ROOT / "config" / "demand.yaml").read_text(encoding="utf-8")
+    assert "Inventory of Operable Generators" in ycfg, \
+        "확정된 EIA 메타데이터 근거가 설정에 안 남아 있다"
+    assert "가동 가능 발전기 인벤토리" in ycfg, \
+        "계획 설비가 섞인다는 경고가 없으면 나중에 status 필터를 지우게 된다"
     # ★ 실패했을 때 무엇을 봤는지 남겨야 다음 실행이 깜깜하지 않다
     assert "diag" in src and "samples" in src, "탐색 실패 시 진단을 안 남긴다"
+    # ★ EIA facet 값 엔드포인트는 **끝에 슬래시**가 있어야 한다 (문서 예시:
+    #   .../facet/sectorid/?api_key=...). 없으면 404 → "배터리 축 못 찾음"으로 보이는데
+    #   실제로는 부르지도 못한 것이다. 2026-09-29 실측으로 확인된 실패 원인.
+    assert '/facet/{fid}/"' in src, "facet URL 끝에 슬래시가 없다 — 404 로 떨어진다"
+    # ★ 이 표는 '운전 중'이 아니라 가동 가능 발전기 **인벤토리**다. 계획·폐지가 섞여 있고
+    #   발전기 x 월 단위라 행이 폭증한다. 12페이지(6만)로는 최근월이 잘린다.
+    assert "MAX_PAGES = 45" in src, "페이지 상한이 낮으면 최근월이 잘린다"
+    assert 'facets[status]' in src, "계획 설비를 서버에서 거르지 않는다"
+    # status 코드를 잘못 짚어 0행이 되는 경우를 스스로 되돌린다
+    assert "statusRetry" in src and "필터 없이 받았습니다" in src, \
+        "status 필터로 0행이 됐을 때 되돌리지 않는다"
     assert "LAST" in src and '"status": r.status_code' in src, \
         "상태코드를 안 남기면 '행 없음'과 '파라미터 오류'를 구분할 수 없다"
     print("  ✓ 수집기 — 키 미노출 · 키 없으면 정상 종료 · 코드 자동 발견")
