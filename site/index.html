@@ -427,7 +427,16 @@ function sparkSVG(v, col){
 }
 
 /* ================= render a sector ================= */
-const ma3 = a => a.map((_,i)=> i<2 ? null : +((a[i]+a[i-1]+a[i-2])/3).toFixed(2));
+// ★ null 을 전파해야 한다. JS 에서 null+null+null === 0 이라,
+//   그냥 더하면 **데이터가 없던 구간이 0 으로 그려진다** (2026-09-29 실측:
+//   미국 수입 계열이 2026-02 부터인데 그 앞이 바닥에 붙은 평평한 선으로 나왔다 —
+//   "수입이 0이었다"로 읽히지만 실제로는 "그 품목이 아직 없었다"였다).
+//   경계에서도 (null+null+v)/3 = v/3 이라 3개월에 걸쳐 가짜로 차오른다.
+const ma3 = a => a.map((_, i) => {
+  if (i < 2) return null;
+  const w = [a[i - 2], a[i - 1], a[i]];
+  return w.some(v => v == null) ? null : +((w[0] + w[1] + w[2]) / 3).toFixed(2);
+});
 let showAll = false;
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1380,15 +1389,23 @@ function renderDemand(host, D){
   }
   const v = D.verdict || {}, im = D.imp || {}, cp = D.cap || {}, kr = D.kr || {};
   const idx = D.idx || {};
+  // ★ 관측 개월수를 함께 낸다. 신설 통계품목은 8개월 창에 6개월치밖에 없는데
+  //   머리글이 "최근 8개월"이면 8개월 합계로 읽힌다 (2026-09-29 실측).
+  const W = D.window;
+  const cov = n => (n==null || n>=W) ? "" :
+    ` <span class="pu warn" title="비교창 ${W}개월 중 실제 관측된 개월수">${n}/${W}M</span>`;
   const rows = [
-    ["한국 → 미국 ESS 수출", kr.usd==null?"–":"$"+fm(kr.usd)+"M", kr.yoy, "관세청 8507603000"],
-    ["미국 수입 (전세계)", im.usd==null?"–":"$"+fm(im.usd)+"M", im.yoy,
-     "US Census "+esc(D.picked||"")],
-    ["  그중 한국", im.krUsd==null?"–":"$"+fm(im.krUsd)+"M", im.krYoy, "CTY_CODE 5800"],
+    ["한국 → 미국 ESS 수출", (kr.usd==null?"–":"$"+fm(kr.usd)+"M")+cov(kr.n), kr.yoy,
+     "관세청 8507603000 · "+W+"개월 합"],
+    ["미국 수입 (전세계)", (im.usd==null?"–":"$"+fm(im.usd)+"M")+cov(im.n), im.yoy,
+     "US Census "+esc(D.picked||"")+" · 합"],
+    ["  그중 한국", (im.krUsd==null?"–":"$"+fm(im.krUsd)+"M")+cov(im.krN), im.krYoy,
+     "CTY_CODE 5800"],
     ["한국 점유율", im.share==null?"–":im.share+"%", null,
-     im.sharePrev==null?"":`전년 ${im.sharePrev}% → ${im.share}%`],
+     im.sharePrev==null?"같은 기간 기준":`전년 ${im.sharePrev}% → ${im.share}%`],
+    // 설치용량은 **스톡**이라 합계가 아니라 최신 시점 값이다
     ["미국 가동 배터리 저장", cp.nowMw==null?"–":fm(cp.nowMw)+"MW", cp.yoy,
-     "EIA · 대규모 한정"],
+     "EIA · 대규모 한정 · "+(cp.asOf?esc(cp.asOf)+" 시점값":"시점값")],
   ];
   host.innerHTML = `
     <section class="panel p12">
@@ -1410,7 +1427,7 @@ function renderDemand(host, D){
           v.shareChg>0?"+":""}${v.shareChg}%p</span>`}</p>
       <p class="pnote" style="margin-top:8px">${esc(v.note||"")}</p>
       <div class="tscroll" style="margin-top:12px"><table class="wt"><thead><tr>
-        <th class="l">축</th><th>최근 ${D.window}개월</th><th>YoY</th><th class="l">출처</th>
+        <th class="l">축</th><th>최근 ${D.window}개월</th><th>YoY</th><th class="l">출처 · 집계 방식</th>
         </tr></thead><tbody>
       ${rows.map(([k,val,y,src])=>`<tr>
         <td class="l">${k.startsWith("  ")?`<span style="padding-left:16px">${esc(k.trim())}</span>`
@@ -1449,8 +1466,11 @@ function renderDemand(host, D){
   const NM = {kr:"한국 수출", imp:"미국 수입", cap:"미국 설치"};
   const CL = {kr:"--s1", imp:"--s2", cap:"--s3"};
   const ser = [];
+  // ★ 여기는 이동평균을 걸지 않는다. 걸면 기준월이 100 으로 안 찍혀서
+  //   부제("2026-02 = 100")와 그림이 어긋난다. 게다가 신설 계열은 점이 몇 개뿐이라
+  //   3개월 평균이 앞 2개월을 통째로 날린다.
   if (idx && idx.idx) for (const k of ["kr","imp","cap"])
-    if (idx.idx[k]) ser.push({name:NM[k], c:CL[k], v:ma3(idx.idx[k])});
+    if (idx.idx[k]) ser.push({name:NM[k], c:CL[k], v:idx.idx[k]});
   if (ser.length) lineChart(mount, D.months||[], ser,
     {w:980,h:260,padR:86,label:"한국 수출 · 미국 수입 · 미국 설치 지수",
      fmtY:v=>Math.round(v), fmtT:v=>v.toFixed(0)});
