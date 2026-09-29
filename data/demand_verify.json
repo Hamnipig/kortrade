@@ -33,12 +33,25 @@
   "found": {
    "route": "electricity/operating-generator-capacity",
    "facet": "technology",
+   "all_facets": [
+    "stateid",
+    "sector",
+    "entityid",
+    "plantid",
+    "generatorid",
+    "unit",
+    "technology",
+    "energy_source_code",
+    "prime_mover_code",
+    "balancing_authority_code",
+    "status"
+   ],
    "ids": [
     "Hydroelectric Pumped Storage",
     "Natural Gas with Compressed Air Storage",
     "Batteries",
-    "Solar Thermal without Energy Storage",
-    "Solar Thermal with Energy Storage"
+    "Solar Thermal with Energy Storage",
+    "Solar Thermal without Energy Storage"
    ],
    "names": [
     "",
@@ -123,14 +136,15 @@
       "Natural Gas Fired Combined Cycle=",
       "Onshore Wind Turbine=",
       "Other Natural Gas=",
-      "Solar Thermal without Energy Storage=",
-      "Solar Thermal with Energy Storage="
+      "Solar Thermal with Energy Storage=",
+      "Solar Thermal without Energy Storage="
      ]
     }
    }
   },
-  "fetched": 51667,
-  "total": 51667,
+  "fetched": 50080,
+  "total": 50080,
+  "statusRetry": false,
   "months": "2021-01~2026-07"
  }
 }
