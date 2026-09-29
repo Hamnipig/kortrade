@@ -61,6 +61,12 @@ def test_attribution_separates_onshoring_from_share_loss():
     # ★ 한 축만 들어와도 말할 수 있는 데까지는 말한다.
     #   Census 키는 2026-05-12 부터 필수가 됐고 발급 메일이 늦는 일이 있어서,
     #   EIA 키만 먼저 들어오는 상황이 실제로 생긴다.
+    # ★ 데이터는 있는데 **전년 동기가 없는** 경우를 '축 없음'이라 말하면 안 된다.
+    #   실측: 미국 수입 $9,846M 이 화면에 찍혀 있는데 판정이 "미국 축 없음"이었다.
+    lvl = D.attribute(-13.0, None, 6.9, None, None)
+    assert lvl["code"] == "level_only", lvl
+    assert "6.9%" in lvl["note"] and "전년 동기 데이터가 없어" in lvl["note"]
+
     only_eia = D.attribute(-13.0, None, None, None, 35.0)
     assert only_eia["code"] == "demand_ok_partial", only_eia
     assert "수요 위축은 아닙니다" in only_eia["note"]
@@ -86,8 +92,28 @@ def test_share_and_index_guards():
     assert D.share(None, 100e6) is None
     # 지수는 **비교용**이다. 단위가 다른 계열을 한 축에 올리기 위한 것.
     # 기준월은 **첫 유효값**(0 이 아닌)이다. 0 으로 나누면 계열이 통째로 사라진다.
-    assert D.index([None, 0, 50.0, 75.0]) == [None, 0.0, 100.0, 150.0]
+    # ★ 0 은 0.0 이 아니라 **None** 이어야 한다. 0 으로 찍으면 선이 바닥에 깔려
+    #   "그 달 수입이 0이었다"로 읽히는데, 실제로는 대개 "그 품목이 아직 없었다"다.
+    assert D.index([None, 0, 50.0, 75.0]) == [None, None, 100.0, 150.0]
     assert D.index([None, 0, 0]) is None
+
+    # ── 공통 기준월 (2026-09-28 실측 사고) ──────────────────────────────
+    # 계열마다 제 첫 값을 100으로 잡으면 시작점이 다른 계열끼리 비교가 무의미해진다.
+    # 실제로 한국 수출은 2024-03부터, 미국 BESS 수입은 2026-01부터였는데(통계품목
+    # 신설 추정) 각자 100에서 출발시키니 화면에서 "미국 수입 폭증"으로 보였다.
+    kr = [100.0] * 30
+    imp = [0] * 24 + [50.0, 60.0, 70.0, 80.0, 90.0, 100.0]
+    r = D.common_index({"kr": kr, "imp": imp})
+    assert r["base"] == 24, r["base"]                  # 둘 다 값이 있는 첫 달
+    assert r["idx"]["kr"][24] == 100.0 and r["idx"]["imp"][24] == 100.0
+    assert r["idx"]["imp"][25] == 120.0                # 50 -> 60
+    assert r["idx"]["imp"][:24] == [None] * 24, "없던 구간이 0 으로 깔리면 안 된다"
+    assert r["starts"] == {"kr": 0, "imp": 24}
+    # 겹치는 구간이 없으면 **지수를 만들지 않는다** — 틀린 그림보다 '비교 불가'가 낫다
+    none_overlap = D.common_index({"a": [1, 2, 0, 0], "b": [0, 0, 3, 4]})
+    assert none_overlap["base"] is None and none_overlap["idx"] is None
+    assert "겹치지 않아" in none_overlap["note"]
+    assert D.common_index({})["idx"] is None
     print("  ✓ 가드 — 작은 기저 / 0 기준월")
 
 
@@ -231,6 +257,9 @@ def test_collector_never_leaks_key_and_exits_clean():
 
 def test_wired_into_site_and_workflow():
     html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    # 공통 기준월과 계열 시작 시점이 화면에 나와야 한다
+    for t in ("공통 기준월", "계열별 관측 시작", "통계품목 신설", "비어 있는 축"):
+        assert t in html, f"화면에 {t} 안내가 없다"
     for t in ("renderDemand", 'id="bdem"', "DVCLS", "최종 수요 대조"):
         assert t in html, f"화면에 {t} 가 없다"
     # 합산 금지 경고는 이 패널의 핵심이다 — 지우면 안 된다
