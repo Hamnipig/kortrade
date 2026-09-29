@@ -149,6 +149,17 @@ def attribute(kr_yoy: float | None, imp_yoy: float | None,
         return {"code": "unknown", "label": "판정 불가", "shareChg": d_share,
                 "note": "한국 수출의 전년 동기 데이터가 부족합니다."}
 
+    # ★ 데이터는 있는데 **전년 동기가 없는** 경우를 '축 없음'이라고 말하면 안 된다.
+    #   2026-09-28 실측: 미국 BESS 수입($9,846M)이 화면에 찍혀 있는데 판정은
+    #   "미국 축 없음"이었다. 실제 상황은 "신설 통계품목이라 전년치가 없다"이고,
+    #   그건 시간이 해결한다는 점에서 전혀 다른 이야기다.
+    if i is None and c is None and share_now is not None:
+        return {"code": "level_only", "label": "수준만 관측 (전년 없음)",
+                "shareChg": d_share,
+                "note": f"미국 수입은 관측되지만 **전년 동기 데이터가 없어** 변화율을 "
+                        f"낼 수 없습니다 — 신설 통계품목일 수 있습니다. 현재 한국 비중은 "
+                        f"{share_now}% 입니다. 12개월이 쌓이면 점유율 변화가 나옵니다."}
+
     # 미국 축이 하나도 없으면 기존 현지화 판정 이상을 말할 수 없다
     if i is None and c is None:
         return {"code": "partial", "label": "미국 축 없음", "shareChg": d_share,
@@ -212,12 +223,52 @@ def share(part: float | None, whole: float | None,
 
 
 def index(values: list[float | None]) -> list[float | None] | None:
-    """첫 유효값 = 100 으로 지수화. 단위가 다른 계열을 한 축에 올리기 위한 것이다.
+    """첫 유효값 = 100 으로 지수화. 단일 계열용.
 
-    ★ 지수는 **비교용**이지 합산용이 아니다. 달러와 GW 를 같은 그림에 올려도
-      되는 이유는 각자의 출발점 대비 배수만 보기 때문이다.
+    ★ 0 은 None 으로 둔다. 0 으로 찍으면 선이 바닥에 깔려 **'그 달 수입이 0이었다'**
+      로 읽히는데, 실제로는 대개 '그 품목이 아직 없었다'이다.
     """
     base = next((v for v in values if v not in (None, 0)), None)
     if not base:
         return None
-    return [None if v is None else round(v / base * 100, 1) for v in values]
+    return [None if not v else round(v / base * 100, 1) for v in values]
+
+
+def common_index(series: dict[str, list[float | None]]) -> dict:
+    """여러 계열을 **같은 기준월**로 지수화한다.
+
+    ★ 이게 왜 중요한가 (2026-09-28 실측 사고)
+      계열마다 제 첫 유효값을 100으로 잡으면, 시작점이 다른 계열끼리는 비교가
+      **무의미해진다.** 실제로 한국 수출은 2024-03부터, 미국 BESS 수입은 2026-01부터
+      데이터가 있었는데(통계품목 신설로 추정), 각자 100에서 출발시키니 화면에서는
+      "미국 수입이 폭증했다"로 보였다. 폭증한 것이 아니라 **없던 계열이 생긴 것**이다.
+
+      그래서 모든 계열이 값을 갖는 **첫 달**을 공통 기준으로 잡는다.
+      겹치는 달이 없으면 지수를 만들지 않는다 — 비교할 수 없다고 말하는 편이
+      틀린 그림을 그리는 것보다 낫다.
+
+    반환: {"base": 인덱스 | None, "idx": {키: 계열} | None,
+           "starts": {키: 첫 유효 인덱스}, "note": 설명}
+    """
+    live = {k: v for k, v in series.items() if v and any(x for x in v)}
+    if not live:
+        return {"base": None, "idx": None, "starts": {}, "note": "데이터가 없습니다."}
+
+    n = max(len(v) for v in live.values())
+    starts = {k: next((i for i, x in enumerate(v) if x), None) for k, v in live.items()}
+
+    base = None
+    for i in range(n):
+        if all(i < len(v) and v[i] for v in live.values()):
+            base = i
+            break
+    if base is None:
+        return {"base": None, "idx": None, "starts": starts,
+                "note": "계열들의 관측 구간이 겹치지 않아 지수 비교를 할 수 없습니다. "
+                        "각 계열의 시작 시점이 다릅니다 — 신설 통계품목일 수 있습니다."}
+
+    out = {}
+    for k, v in live.items():
+        b = v[base]
+        out[k] = [None if not x else round(x / b * 100, 1) for x in v]
+    return {"base": base, "idx": out, "starts": starts, "note": ""}
