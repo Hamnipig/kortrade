@@ -50,8 +50,8 @@
     "Hydroelectric Pumped Storage",
     "Natural Gas with Compressed Air Storage",
     "Batteries",
-    "Solar Thermal with Energy Storage",
-    "Solar Thermal without Energy Storage"
+    "Solar Thermal without Energy Storage",
+    "Solar Thermal with Energy Storage"
    ],
    "names": [
     "",
@@ -136,8 +136,8 @@
       "Natural Gas Fired Combined Cycle=",
       "Onshore Wind Turbine=",
       "Other Natural Gas=",
-      "Solar Thermal with Energy Storage=",
-      "Solar Thermal without Energy Storage="
+      "Solar Thermal without Energy Storage=",
+      "Solar Thermal with Energy Storage="
      ]
     }
    }
