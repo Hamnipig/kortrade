@@ -183,9 +183,16 @@ def build_demand(store, df, cfg, months, cur, prev, q3) -> dict:
                 "desc": (codes.get(pick) or {}).get("desc", "")},
         "cap": {"nowMw": None if cap_now is None else round(cap_now),
                 "yoy": cap_yoy, "m": ser(cap)},
-        "idx": {"kr": DM.index([kr_ser.get(p) for p in months]),
-                "imp": DM.index([imp_all.get(p) for p in months]),
-                "cap": DM.index([cap.get(p) for p in months])},
+        # ★ 계열마다 제 첫 값을 100으로 잡으면 시작점이 다른 계열끼리 비교가 무의미해진다.
+        #   실측: 한국 수출은 2024-03부터, 미국 BESS 수입은 2026-01부터였는데 각자
+        #   100에서 출발시키니 "미국 수입 폭증"으로 보였다 — 신설 품목이었을 뿐이다.
+        "idx": DM.common_index({"kr": [kr_ser.get(p) for p in months],
+                                "imp": [imp_all.get(p) for p in months],
+                                "cap": [cap.get(p) for p in months]}),
+        "starts": {k: (months[v] if v is not None else None) for k, v in
+                   DM.common_index({"kr": [kr_ser.get(p) for p in months],
+                                    "imp": [imp_all.get(p) for p in months],
+                                    "cap": [cap.get(p) for p in months]})["starts"].items()},
         "verdict": DM.attribute(kr_yoy, imp_yoy, s_now, s_prev, cap_yoy,
                                 dc.flat_pct, dc.share_pp),
         "verify": verify,
