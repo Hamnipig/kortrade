@@ -102,7 +102,21 @@ def build_demand(store, df, cfg, months, cur, prev, q3) -> dict:
     s_prev = DM.share(win(imp_kr, prev), win(imp_all, prev), dc.min_base_usd)
     kr_yoy = yoy(kr_ser, cur, prev)
     imp_yoy = yoy(imp_all, cur, prev)
-    cap_now, cap_prev = win(cap, cur[-1:]), win(cap, prev[-1:])
+
+    # ★ 비교창 안에서 **몇 개월이나 실제로 관측됐는지**를 센다.
+    #   신설 통계품목은 8개월 창에 6개월치밖에 없는데, 표 머리글이 "최근 8개월"이면
+    #   8개월 합계로 읽힌다. 계열마다 실제 개월수를 같이 낸다 (2026-09-29 실측).
+    def nmon(series, ps):
+        return sum(1 for p in ps if series.get(p) is not None)
+
+    # ★ 설치용량은 **스톡**이라 합이 아니라 최신 시점 값이다. 그런데 마지막 달만
+    #   보면 EIA 갱신이 한 달 늦은 것만으로 '–'가 되어 축이 통째로 죽는다.
+    #   실제로 관측된 가장 최근 달을 쓰고, 그 달을 화면에 밝힌다.
+    cap_ms = sorted(cap)
+    cap_last = cap_ms[-1] if cap_ms else None
+    cap_now = cap.get(cap_last) if cap_last else None
+    cap_prev_p = F.shift(cap_last, -12) if cap_last else None
+    cap_prev = cap.get(cap_prev_p) if cap_prev_p else None
     cap_yoy = (None if (cap_now is None or not cap_prev)
                else round((cap_now / cap_prev - 1) * 100, 1))
 
@@ -173,16 +187,20 @@ def build_demand(store, df, cfg, months, cur, prev, q3) -> dict:
         "axes": axes,
         "asOf": months[-1], "window": cfg.window, "months": months,
         "picked": pick,
-        "kr": {"usd": _m(win(kr_ser, cur)), "yoy": kr_yoy, "m": [_m(kr_ser.get(p)) for p in months]},
+        "kr": {"usd": _m(win(kr_ser, cur)), "yoy": kr_yoy, "n": nmon(kr_ser, cur),
+               "m": [_m(kr_ser.get(p)) for p in months]},
         "imp": {"usd": _m(win(imp_all, cur)), "yoy": imp_yoy,
                 "krUsd": _m(win(imp_kr, cur)), "krYoy": yoy(imp_kr, cur, prev),
                 "share": s_now, "sharePrev": s_prev,
+                "n": nmon(imp_all, cur), "krN": nmon(imp_kr, cur),
                 "m": [_m(imp_all.get(p)) for p in months],
                 "krM": [_m(imp_kr.get(p)) for p in months],
                 "label": (codes.get(pick) or {}).get("label", pick),
                 "desc": (codes.get(pick) or {}).get("desc", "")},
+        # 설치용량은 스톡 — 합계가 아니라 **최신 관측 시점의 값**이다
         "cap": {"nowMw": None if cap_now is None else round(cap_now),
-                "yoy": cap_yoy, "m": ser(cap)},
+                "yoy": cap_yoy, "asOf": cap_last, "prevOf": cap_prev_p,
+                "n": len(cap_ms), "m": ser(cap)},
         # ★ 계열마다 제 첫 값을 100으로 잡으면 시작점이 다른 계열끼리 비교가 무의미해진다.
         #   실측: 한국 수출은 2024-03부터, 미국 BESS 수입은 2026-01부터였는데 각자
         #   100에서 출발시키니 "미국 수입 폭증"으로 보였다 — 신설 품목이었을 뿐이다.
