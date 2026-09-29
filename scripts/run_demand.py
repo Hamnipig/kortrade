@@ -339,8 +339,24 @@ def main() -> int:
             out["eia"] = collect_eia(cfg, store, eia_key, args.start, end)
             f = out["eia"].get("found")
             print(f"미국 설치용량 — {out['eia']['rows']}행"
-                  + (f" · 라우트 {f['route']} · {f['facet']}={f['ids']}" if f else
+                  + (f" · 라우트 {f['route']} · {f['facet']}={f['ids']}"
+                     f" · 컬럼 {out['eia'].get('column')}"
+                     f" · {out['eia'].get('fetched')}/{out['eia'].get('total')}행"
+                     f" · {out['eia'].get('months')}" if f else
                      f" · {out['eia'].get('note','')}"))
+            # ★ 실패했으면 진단을 **로그에 그대로 찍는다.** 파일을 열지 않아도
+            #   Actions 로그만 보고 원인을 알 수 있어야 한다 — 왕복이 줄어든다.
+            if not out["eia"].get("rows"):
+                for route, d in (out["eia"].get("diag") or {}).items():
+                    print(f"  [진단] {route}")
+                    if d.get("meta"):
+                        print(f"     {d['meta']} {d.get('body','')[:120]}")
+                        continue
+                    print(f"     facets  : {d.get('facets')}")
+                    print(f"     columns : {d.get('columns')}")
+                    print(f"     freq    : {d.get('frequencies')}")
+                    for fid, vals in (d.get("samples") or {}).items():
+                        print(f"     {fid} 값 표본: {vals[:15]}")
         else:
             out["eia"] = {"skipped": "키 없음" if not eia_key else "설정에서 꺼짐"}
 
