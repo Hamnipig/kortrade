@@ -188,10 +188,25 @@ def build_places(store: Store, cfg: P.PcbConfig, months, cur, prev, q3, q3p) -> 
 # ══════════════════════════════════════════════════════════════════════════
 
 def build_intl(cfg: P.PcbConfig, store: Store | None = None,
-               kr_asp_yoy: float | None = None) -> dict:
+               kr_asp_yoy: float | None = None,
+               kr_usd: dict | None = None, kr_wgt: dict | None = None,
+               kr_as_of: str | None = None) -> dict:
+    """★ 한국 ASP 를 **값 하나가 아니라 시계열로** 받는다.
+
+    일본 「時系列表」 는 연 1회 공표라 최신이 전년 12월이다(2026-09 시점 2025-12).
+    한국은 2026-08 까지 있다. 그 둘을 그냥 맞대면 **2026년 한국과 2025년 일본을
+    비교**하게 된다 — 교차검증이라는 말이 무색해진다.
+
+    그래서 일본의 최근창(예: 2025-10~12)에 맞춰 한국 ASP YoY 를 **다시 계산**해
+    같은 기간끼리 비교하고, 시차는 화면에 따로 적는다.
+    """
+    # ★ 선언 목록은 정적이라 연결된 뒤에도 '필요한 키'로 남는다. 실제로 화면에서
+    #   일본 축이 붙었는데도 "아직 붙이지 않은 축"에 키가 필요하다고 떠서
+    #   붙은 건지 아닌지 알 수 없었다(2026-09-30). 연결 여부는 아래에서 채운다.
     declared = [{"key": i.key, "name": i.name, "who": i.who, "needKey": i.need_key,
                  "free": i.free, "have": i.have, "signup": i.signup,
-                 "lag": i.lag, "why": " ".join((i.why or "").split())}
+                 "lag": i.lag, "why": " ".join((i.why or "").split()),
+                 "connected": False}
                 for i in cfg.intl]
     why = ("한국 데이터만으로는 **믹스**(고다층·패키지기판 비중)와 **재고순환**을 "
            "볼 수 없습니다. 한국 HS 8534 에 층수 구분이 없고, 관세 통계에는 "
@@ -355,6 +370,57 @@ def build_intl(cfg: P.PcbConfig, store: Store | None = None,
                          else round(share_now - share_prev, 1)),
         })
 
+    # ── 기간 정렬 ────────────────────────────────────────────────────────
+    # 일본 최근창과 **같은 달**로 한국 ASP YoY 를 다시 낸다. 이게 없으면
+    # 2026년 한국 단가와 2025년 일본 믹스를 맞대는 셈이 된다.
+    def _kr_asp(ps):
+        if not kr_usd or not kr_wgt:
+            return None
+        u = sum(kr_usd.get(p, 0.0) for p in ps)
+        w = sum(kr_wgt.get(p, 0.0) for p in ps)
+        return PQ.asp(u, w)
+
+    kr_aligned = None
+    if kr_usd and kr_wgt:
+        a, b = _kr_asp(cur3), _kr_asp(prev3)
+        if a and b:
+            kr_aligned = round((a / b - 1) * 100, 1)
+
+    lag = None
+    if kr_as_of:
+        try:
+            lag = ((int(kr_as_of[:4]) - int(latest[:4])) * 12
+                   + int(kr_as_of[5:]) - int(latest[5:]))
+        except (ValueError, IndexError):
+            lag = None
+
+    used = kr_aligned if kr_aligned is not None else kr_asp_yoy
+    cross = {
+        "krAspYoy": used,
+        "krAspYoyAligned": kr_aligned,
+        "krAspYoyLatest": kr_asp_yoy,
+        "jpMixChg": mix_chg,
+        "window": f"{cur3[0]}~{cur3[-1]}",
+        "krAsOf": kr_as_of, "jpAsOf": latest, "lagMonths": lag,
+        "aligned": kr_aligned is not None,
+        "verdict": P.mix_cross(used, mix_chg),
+        "note": (
+            f"일본 「時系列表」 는 연 1회 공표라 최신이 {latest} 입니다"
+            + (f" — 한국({kr_as_of})보다 **{lag}개월 뒤**입니다. "
+               if lag else ". ")
+            + ("교차 판정은 두 축을 **같은 기간**"
+               f"({cur3[0]}~{cur3[-1]})으로 맞춰 계산했습니다. "
+               "옆의 '한국 최신'과 숫자가 다른 것은 기간이 달라서입니다."
+               if kr_aligned is not None else
+               "한국 축의 해당 기간 데이터가 없어 최신값으로 비교했습니다 — "
+               "기간이 어긋나므로 참고로만 보십시오.")),
+    }
+
+    for d in declared:
+        if d["key"] == "jp_meti":
+            d["connected"] = True
+            d["needKey"] = None
+
     return {
         "ok": True,
         "asOf": latest, "months": months,
@@ -369,8 +435,7 @@ def build_intl(cfg: P.PcbConfig, store: Store | None = None,
                 "note": "일본 생산금액에서 **10층 이상 다층 + 빌드업 다층**이 "
                         "차지하는 비중입니다. 4층·6~8층은 범용에 가까워 뺐습니다. "
                         "한국에는 이 구분이 아예 없습니다 — 그래서 이 축을 둡니다."},
-        "cross": {"krAspYoy": kr_asp_yoy, "jpMixChg": mix_chg,
-                  "verdict": P.mix_cross(kr_asp_yoy, mix_chg)},
+        "cross": cross,
         "why": why,
         "note": "일본은 **생산**, 한국은 **수출**입니다. 단위도 모집단도 달라 "
                 "두 숫자를 더하지 않습니다 — 방향만 나란히 놓고 봅니다.",
@@ -658,7 +723,8 @@ def build(store: Store, cfg: P.PcbConfig) -> dict | None:
     # ── 5·6 ──────────────────────────────────────────────────────────────
     places = build_places(store, cfg, months, cur, prev, q3, q3p)
     # 한국 ASP 의 최근창 YoY 를 넘겨 일본 品目別 비중과 교차검증시킨다
-    intl = build_intl(cfg, store, head["recent"]["priceYoy"])
+    intl = build_intl(cfg, store, head["recent"]["priceYoy"],
+                      kr_usd=b_usd, kr_wgt=b_wgt, kr_as_of=latest)
 
     drafts = [r for r in items if r["status"] == "draft"]
 
