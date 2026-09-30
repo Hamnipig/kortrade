@@ -48,6 +48,9 @@ PAGE = 5000        # EIA 요청당 행 상한 (문서 명시)
 # 이 라우트는 **발전기 x 월** 단위다. 미국 배터리 설비는 2026년 기준 수천 기이고
 # 2021-01~ 이면 월수까지 곱해져 10만 행을 넘는다. 12페이지(6만)로는 최근월이 잘린다.
 MAX_PAGES = 45     # 225,000행까지
+# 원산지별로 남길 상위 국가 수. 전수(200여 개)를 담으면 DB 만 커지고
+# 화면에서 읽히지도 않는다. 상위 12개면 미국 BESS 수입의 대부분을 덮는다.
+TOP_ORIGINS = 12
 log = logging.getLogger("run_demand")
 
 
@@ -87,17 +90,25 @@ def _get(url: str, params: dict, tries: int = 2) -> object | None:
 
 def collect_census(cfg: D.DemandConfig, store: Store, key: str,
                    start: str, end: str) -> dict:
-    """HTS 10단위 × (한국 / 전세계) 월별 수입액.
+    """HTS 10단위 × (한국 / 전세계 / **원산지별**) 월별 수입액.
 
-    한국만 받으면 점유율을 못 낸다 — **전세계 합계를 반드시 함께 받는다.**
-    그게 이 축의 존재 이유(시장 규모 대비 우리 몫)이기 때문이다.
+    한국만 받으면 점유율을 못 낸다 — 전세계 합계를 반드시 함께 받는다.
+
+    ★ 원산지별을 따로 저장하는 이유 (2026-09-29)
+      "미국 수입에서 한국 비중이 빠졌다"는 사실 하나로는 원인을 못 가른다:
+        (a) 중국 등 경쟁사에 밀렸다
+        (b) 한국 기업이 미국 현지 생산으로 옮겼다   ← 수입 통계에서 아예 사라진다
+        (c) 한국 기업이 폴란드·헝가리 공장에서 미국으로 보낸다 ← 그 나라 수입이 는다
+      (c)는 **원산지 분해만으로 바로 보인다.** 그리고 이건 공짜다 —
+      전세계 조회 응답에 이미 국가별 행이 다 들어 있고, 지금은 합산해서 버리고 있었다.
+      호출은 한 건도 늘지 않는다.
     """
     base = f"https://api.census.gov/data/{cfg.dataset}"
-    seen, rows, diag = {}, [], {}
+    seen, rows, diag, names = {}, [], {}, {}
     for c in cfg.codes:
         for tag, partner in (("KR", cfg.partner), ("ALL", None)):
             params = {
-                "get": "I_COMMODITY,I_COMMODITY_SDESC,GEN_VAL_MO,CTY_CODE",
+                "get": "I_COMMODITY,I_COMMODITY_SDESC,GEN_VAL_MO,CTY_CODE,CTY_NAME",
                 "I_COMMODITY": c.code, "COMM_LVL": "HS10",
                 # ★ 공백이어야 한다. "from+X+to+Y" 를 그대로 넣으면 requests 가
                 #   '+' 를 %2B(리터럴 플러스)로 인코딩해 Census 가 못 읽는다.
@@ -124,6 +135,7 @@ def collect_census(cfg: D.DemandConfig, store: Store, key: str,
                     continue
             head = {n: i for i, n in enumerate(data[0])}
             agg: dict[str, float] = {}
+            by_cty: dict[str, dict[str, float]] = {}
             for r in data[1:]:
                 # 전세계는 국가별 행이 전부 오므로 기간별로 합산한다.
                 # CTY_CODE '-' 나 집계행이 섞이면 이중계상이 되므로 4자리 숫자만 센다.
@@ -138,10 +150,23 @@ def collect_census(cfg: D.DemandConfig, store: Store, key: str,
                 except (TypeError, ValueError):
                     continue
                 agg[p] = agg.get(p, 0.0) + v
+                if partner is None:                     # 전세계 조회에서만 원산지 분해
+                    by_cty.setdefault(cc, {})[p] = by_cty.get(cc, {}).get(p, 0.0) + v
+                    if "CTY_NAME" in head:
+                        names[cc] = str(r[head["CTY_NAME"]])
                 seen.setdefault(c.code, str(r[head["I_COMMODITY_SDESC"]]))
             for p, v in agg.items():
                 rows.append({"source": "census", "series": f"{c.code}:{tag}",
                              "period": p, "value": v, "unit": "USD"})
+
+            # ── 원산지별 — 금액 상위 국가만 남긴다 (전수를 담으면 DB 가 커진다) ──
+            if partner is None and by_cty:
+                top = sorted(by_cty, key=lambda k: -sum(by_cty[k].values()))[:TOP_ORIGINS]
+                for cc in top:
+                    for p, v in by_cty[cc].items():
+                        rows.append({"source": "census",
+                                     "series": f"{c.code}:C:{cc}",
+                                     "period": p, "value": v, "unit": "USD"})
     if rows:
         store.upsert_demand(rows)
     # 설명 대조 — 기계가 확인한 것만 active 로 승격한다
@@ -154,7 +179,8 @@ def collect_census(cfg: D.DemandConfig, store: Store, key: str,
             "matched": bool(desc) and c.expect.lower() in desc.lower(),
             "expect": c.expect,
         }
-    return {"rows": len(rows), "codes": verdicts, "diag": diag}
+    return {"rows": len(rows), "codes": verdicts, "diag": diag,
+            "ctyNames": names}
 
 
 # ── ② 미국 배터리 저장 가동용량 (EIA) ─────────────────────────────────────

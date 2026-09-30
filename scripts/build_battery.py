@@ -98,6 +98,48 @@ def build_demand(store, df, cfg, months, cur, prev, q3) -> dict:
     imp_kr = census.get(f"{pick}:KR", {}) if pick else {}
     cap = eia.get("capacity", {})
 
+    # ── 원산지 분해 — "그 자리를 누가 가져갔나" ──────────────────────────
+    # 한국 비중이 빠졌을 때 폴란드·헝가리가 오르면 한국 기업의 유럽 기지일 수 있어
+    # 해석이 완전히 달라진다. 중국이 오르면 경쟁 패배 쪽이다.
+    cnames = (verify.get("census") or {}).get("ctyNames") or {}
+    origins = []
+    if pick:
+        pre = f"{pick}:C:"
+        for k, ser_ in census.items():
+            if not k.startswith(pre):
+                continue
+            cc = k[len(pre):]
+            n_, p_ = win(ser_, cur), win(ser_, prev)
+            if not n_:
+                continue
+            origins.append({
+                "cty": cc, "name": cnames.get(cc, cc), "usd": _m(n_),
+                "share": DM.share(n_, win(imp_all, cur), dc.min_base_usd),
+                "sharePrev": DM.share(p_, win(imp_all, prev), dc.min_base_usd),
+                "yoy": yoy(ser_, cur, prev),
+                "isKR": cc == dc.partner,
+            })
+        origins.sort(key=lambda r: -(r["usd"] or 0))
+        for o in origins:
+            o["shareChg"] = (None if (o["share"] is None or o["sharePrev"] is None)
+                             else round(o["share"] - o["sharePrev"], 1))
+    origins = origins[:10]
+
+    # ── 대미 현지화지수 — 판정의 **두 번째 조건** ─────────────────────────
+    # 미국 수입의 한국 비중 하락 하나로는 경쟁 패배와 현지화를 못 가른다.
+    # 한국 기업이 미국에서 만들면 수입에서 아예 사라지기 때문이다.
+    # 부품·소재가 계속 나가는지(=현지화지수)를 같이 봐야 한다.
+    q3p = [F.shift(p, -12) for p in q3]
+    us_df = df[df["country_code"] == "US"]
+    fin_c = cfg.stage_codes("final", True)
+    up_c = cfg.stage_codes("component", True) + cfg.stage_codes("material", True)
+
+    def _s(frame, cs, ps):
+        return float(frame[frame["hs_code"].isin(cs) & frame["period"].isin(ps)]["eu"].sum())
+
+    loc_now = B.localization(_s(us_df, fin_c, q3), _s(us_df, up_c, q3))
+    loc_prev = B.localization(_s(us_df, fin_c, q3p), _s(us_df, up_c, q3p))
+
     s_now = DM.share(win(imp_kr, cur), win(imp_all, cur), dc.min_base_usd)
     s_prev = DM.share(win(imp_kr, prev), win(imp_all, prev), dc.min_base_usd)
     kr_yoy = yoy(kr_ser, cur, prev)
@@ -211,8 +253,12 @@ def build_demand(store, df, cfg, months, cur, prev, q3) -> dict:
                    DM.common_index({"kr": [kr_ser.get(p) for p in months],
                                     "imp": [imp_all.get(p) for p in months],
                                     "cap": [cap.get(p) for p in months]})["starts"].items()},
+        "origins": origins,
+        "loc": {"now": loc_now, "prev": loc_prev,
+                "note": "대미 (부품+소재) ÷ 완제품, 최근 %d개월" % cfg.recent},
         "verdict": DM.attribute(kr_yoy, imp_yoy, s_now, s_prev, cap_yoy,
-                                dc.flat_pct, dc.share_pp),
+                                dc.flat_pct, dc.share_pp,
+                                loc_now=loc_now, loc_prev=loc_prev),
         "verify": verify,
         "sources": [
             {"name": "미국 수입", "who": "US Census International Trade API",
