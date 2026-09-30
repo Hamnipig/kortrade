@@ -40,11 +40,29 @@ def test_config():
 
 def test_attribution_separates_onshoring_from_share_loss():
     """이 레이어 전체가 이 한 가지를 위해 있다."""
-    # 시장은 크는데(수입 +25%) 한국 비중이 30%→18% → **점유율 상실**
+    # ★ 2026-09-29 정정 — 비중 하락 하나로 '경쟁 패배'라고 말하면 **안 된다.**
+    #   미국 수입의 한국 비중은 **선적 원산지 비중**이지 기업 점유율이 아니다.
+    #   LG엔솔·삼성SDI가 미시간·조지아에서 만들어 팔면 그 물량은 미국 수입에
+    #   아예 안 잡힌다 — 즉 현지화가 진행될수록 한국 비중은 반드시 떨어진다.
+    #   같은 그림이 (a)경쟁 패배 (b)현지화 (c)제3국 기지 재배치 에서 모두 나온다.
+    #   그래서 **현지화지수를 두 번째 조건으로** 요구한다.
+
+    # 현지화지수를 모르면 → 원인 미상. 우기지 않는다.
     v = D.attribute(kr_yoy=-13.0, imp_yoy=25.0, share_now=18.0, share_prev=30.0,
                     cap_yoy=40.0)
-    assert v["code"] == "share_loss", v
+    assert v["code"] == "share_down_unknown", v
     assert v["shareChg"] == -12.0, v
+    assert "구분할 수 없습니다" in v["note"]
+
+    # 현지화지수가 함께 올랐으면 → **현지화**. 부품·소재는 계속 나간다는 뜻이다.
+    v = D.attribute(-13.0, 25.0, 18.0, 30.0, 40.0, loc_now=1.6, loc_prev=0.7)
+    assert v["code"] == "localizing", v
+    assert "경쟁 패배가 아니라" in v["note"]
+
+    # 현지화지수가 그대로인데 비중만 빠졌으면 → 그때 비로소 **점유율 상실 의심**
+    v = D.attribute(-13.0, 25.0, 18.0, 30.0, 40.0, loc_now=0.72, loc_prev=0.70)
+    assert v["code"] == "share_loss", v
+    assert "폴란드·헝가리" in v["note"], "제3국 기지 가능성 경고가 빠졌다"
 
     # 설치는 느는데(+40%) 수입은 줄고(−20%) 비중은 유지 → **현지 생산 대체**
     v = D.attribute(-13.0, -20.0, 30.0, 31.0, 40.0)
@@ -72,8 +90,10 @@ def test_attribution_separates_onshoring_from_share_loss():
     assert "수요 위축은 아닙니다" in only_eia["note"]
     assert "구분할 수 없습니다" in only_eia["note"], "구분 불가를 숨기면 안 된다"
     assert D.attribute(-13.0, None, None, None, -15.0)["code"] == "demand_down"
-    # Census 만 있어도 점유율 판정은 된다 (이게 이 축의 핵심 기여다)
-    assert D.attribute(-13.0, 25.0, 18.0, 30.0, None)["code"] == "share_loss"
+    # Census 만 있어도 비중 변화는 잡힌다 — 다만 현지화지수 없이는 원인을 못 정한다
+    assert D.attribute(-13.0, 25.0, 18.0, 30.0, None)["code"] == "share_down_unknown"
+    assert D.attribute(-13.0, 25.0, 18.0, 30.0, None,
+                       loc_now=0.72, loc_prev=0.70)["code"] == "share_loss"
 
     # ★ 미국 축이 없으면 **솔직하게 판정 불가**를 내려야 한다. 우기면 안 된다.
     p = D.attribute(-13.0, None, None, None, None)
@@ -154,7 +174,12 @@ def test_build_attaches_demand():
     assert dm["imp"]["yoy"] and dm["imp"]["yoy"] > 20, dm["imp"]
     assert dm["imp"]["share"] is not None and dm["imp"]["sharePrev"] is not None
     assert dm["imp"]["share"] < dm["imp"]["sharePrev"], "점유율이 떨어져야 하는 시드다"
-    assert dm["verdict"]["code"] == "share_loss", dm["verdict"]
+    # 이 픽스처는 상류(부품·소재)가 계속 늘어나므로 현지화지수가 오른다 →
+    # 비중이 빠져도 '점유율 상실'이 아니라 **현지화**로 판정돼야 맞다.
+    assert dm["verdict"]["code"] == "localizing", dm["verdict"]
+    assert dm["loc"]["now"] is not None, "대미 현지화지수가 판정에 안 들어갔다"
+    # 원산지 분해가 붙어야 "그 자리를 누가 가져갔나"를 볼 수 있다
+    assert "origins" in dm, "원산지 분해가 없다"
     # 지수는 세 축 모두 100 에서 출발해야 한다 (합산이 아니라 비교라는 표시)
     for k in ("kr", "imp", "cap"):
         ser = dm["idx"].get(k)
@@ -313,6 +338,12 @@ def test_wired_into_site_and_workflow():
     assert "세 축을 더하지 마십시오" in html
     assert "GWh 로 환산하지 않습니다" in html
     assert "수요이지 한국의 공급이 아닙니다" in html
+    # ★ 틀린 주장이 되살아나면 안 된다 (2026-09-29 정정)
+    assert "현지화가 아니라 경쟁 패배입니다" not in html, \
+        "비중 하락을 곧 경쟁 패배로 단정하는 문구가 되살아났다"
+    for t in ("선적 원산지 비중", "미국 BESS 수입 원산지", "대미 현지화지수",
+              "미국 현지 생산분은 여기 어디에도 안 잡힙니다"):
+        assert t in html, f"화면에 '{t}' 안내가 없다"
     assert "CENSUS_API_KEY" in html and "EIA_API_KEY" in html, \
         "키가 없을 때 무엇을 하면 되는지 안내가 없다"
     wf = (ROOT / ".github" / "workflows" / "update.yml").read_text(encoding="utf-8")
