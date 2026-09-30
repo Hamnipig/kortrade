@@ -2244,6 +2244,23 @@ function pcbIndex(D){
           usd: u.map((_,i)=>nz(u,i)), wgt: w.map((_,i)=>nz(w,i))};
 }
 
+/* '무엇을 기다리는지' 표. 연결 전/후 모두 같은 표를 쓴다 — 붙고 나서도
+   남은 축이 무엇인지 보여야 다음 순서가 정해진다. */
+function intlDecl(D){
+  return `<div class="tscroll"><table class="wt"><thead><tr>
+      <th class="l">축</th><th class="l">출처</th><th class="l">공표 시차</th>
+      <th class="l">필요한 키</th><th class="l">왜 필요한가</th></tr></thead><tbody>
+      ${(D.intl.items||[]).map(i=>`<tr class="itemrow">
+        <td class="l">${esc(i.name)}</td>
+        <td class="l dimc">${esc(i.who)}</td>
+        <td class="l hsk">${esc(i.lag||"–")}</td>
+        <td class="l">${i.have?'<span class="pu high">보유</span>':
+          (i.needKey?`<span class="hsk">${esc(i.needKey)}</span>`:
+            '<span class="pu">키 불필요</span>')}</td>
+        <td class="l dimc" style="max-width:420px;white-space:normal">${mdb(i.why)}</td>
+      </tr>`).join("")}</tbody></table></div>`;
+}
+
 function renderPcb(){
   const v = document.getElementById("view");
   if (!PCB){
@@ -2425,23 +2442,75 @@ function renderPcb(){
         </tbody></table></div>
       </section>
 
+      ${D.intl.ok ? `
+      <section class="panel p12">
+        <div class="phead"><h2 class="ptitle">해외 대조축 — 일본 품목별 생산</h2>
+          <span class="unit">METI 생산동태통계 · 기준월 ${esc(D.intl.asOf)}</span></div>
+        <p class="pnote">한국 ASP 가 올랐을 때 그게 <b>고다층·패키지기판으로의 믹스 전환</b>인지
+          <b>구리값·환율</b>인지는 한국 데이터만으로 못 가릅니다 — HS 8534 에 층수 구분이
+          없기 때문입니다. 일본은 品目別로 쪼개 주므로 고부가 비중의 방향을 따로 볼 수
+          있습니다. ${mdb(D.intl.note)}</p>
+        <div class="sig">
+          <div class="sigcard"><h4>${esc(D.intl.mix.label)}</h4>
+            <div class="sub">최근 ${D.recent}개월 · 생산금액 기준</div><ol>
+            <li><span class="nm">${D.intl.mix.now==null?"–":D.intl.mix.now+"%"}</span>
+              <span class="vl ${D.intl.mix.chg>0?"up":"down"}">${pp(D.intl.mix.chg)}</span></li>
+            <li><span class="nm">전년</span>
+              <span class="vl">${D.intl.mix.prev==null?"–":D.intl.mix.prev+"%"}</span></li>
+          </ol></div>
+          <div class="sigcard"><h4>한국 ASP</h4>
+            <div class="sub">최근 ${D.recent}개월 YoY</div><ol>
+            <li><span class="nm">단가</span>
+              <span class="vl ${D.intl.cross.krAspYoy>0?"up":"down"}">${
+                pct(D.intl.cross.krAspYoy)}</span></li>
+            <li><span class="nm">물량</span>
+              <span class="vl ${hr.qtyYoy>0?"up":"down"}">${pct(hr.qtyYoy)}</span></li>
+          </ol></div>
+          <div class="sigcard"><h4>교차 판정</h4>
+            <div class="sub">두 축의 방향</div><ol>
+            <li><span class="nm">${pvb(D.intl.cross.verdict)}</span></li>
+          </ol></div>
+        </div>
+        <p class="pnote" style="margin-top:10px">${mdb(D.intl.cross.verdict.note)}</p>
+        <div class="legend" style="margin-top:12px">
+          <span class="lg"><span class="sw" style="background:var(--s2)"></span>고부가 비중(%)</span>
+        </div>
+        <div id="pmix"></div>
+        <div class="tscroll" style="margin-top:12px"><table class="wt"><thead><tr>
+          <th class="l">품목</th><th>최신월</th><th>금액 YoY</th><th>최근 ${D.recent}M</th>
+          <th>수량 YoY</th><th>비중</th><th>비중 변화</th>
+          <th class="l">왜 보는가</th></tr></thead><tbody>
+          ${(D.intl.rows||[]).map(r=>`<tr class="itemrow${r.seen?"":" dim"}">
+            <td class="l">${esc(r.label)}${r.highValue?' <span class="pu high">고부가</span>':""}</td>
+            <td>${r.amt.now==null?"–":fm(r.amt.now)+(r.amt.unit?" "+esc(r.amt.unit):"")}</td>
+            <td class="${r.amt.yoy>0?"up":"down"}">${pct(r.amt.yoy)}</td>
+            <td class="${r.amt.recentYoy>0?"up":"down"}">${pct(r.amt.recentYoy)}</td>
+            <td>${pct(r.qty.recentYoy)}</td>
+            <td>${r.share==null?"–":r.share+"%"}</td>
+            <td class="${r.shareChg>0?"up":"down"}">${pp(r.shareChg)}</td>
+            <td class="l dimc" style="max-width:360px;white-space:normal">${
+              r.seen?mdb(r.why):"응답에 이 품목이 없습니다 — data/pcb_intl_verify.json 의 meta.classes 확인"}</td>
+          </tr>`).join("")}</tbody></table></div>
+        ${(D.intl.source.missing||[]).length?`<p class="pnote" style="margin-top:8px">
+          못 받은 계열: <code>${esc(D.intl.source.missing.join(", "))}</code></p>`:""}
+        <p class="pnote" style="margin-top:8px">출처 ${esc(D.intl.source.who)}${
+          D.intl.source.statsDataId?` · 통계표 <code>${esc(D.intl.source.statsDataId)}</code>`:""}${
+          D.intl.source.title?` (${esc(D.intl.source.title)})`:""}.
+          <span class="dimc">${esc(D.intl.credit||"")}</span></p>
+      </section>
+      <section class="panel p12">
+        <div class="phead"><h2 class="ptitle">아직 붙이지 않은 축</h2>
+          <span class="unit">전부 무료 출처</span></div>
+        <p class="pnote">${mdb(D.intl.why)}</p>
+        ${intlDecl(D)}
+      </section>` : `
       <section class="panel p12">
         <div class="phead"><h2 class="ptitle">해외 대조축 — 아직 연결 전</h2>
           <span class="unit">전부 무료 출처</span></div>
         <p class="pnote">${mdb(D.intl.why)}</p>
-        <div class="tscroll"><table class="wt"><thead><tr>
-          <th class="l">축</th><th class="l">출처</th><th class="l">공표 시차</th>
-          <th class="l">필요한 키</th><th class="l">왜 필요한가</th></tr></thead><tbody>
-          ${(D.intl.items||[]).map(i=>`<tr class="itemrow">
-            <td class="l">${esc(i.name)}</td>
-            <td class="l dimc">${esc(i.who)}</td>
-            <td class="l hsk">${esc(i.lag||"–")}</td>
-            <td class="l">${i.have?'<span class="pu high">보유</span>':
-              (i.needKey?`<span class="tk">${esc(i.needKey)}</span>`:
-                '<span class="pu">키 불필요</span>')}</td>
-            <td class="l dimc" style="max-width:420px;white-space:normal">${mdb(i.why)}</td>
-          </tr>`).join("")}</tbody></table></div>
-      </section>
+        <p class="pnote">${mdb(D.intl.note)}</p>
+        ${intlDecl(D)}
+      </section>`}
 
       <section class="panel p12">
         <div class="phead"><h2 class="ptitle">코드 검증</h2>
@@ -2549,6 +2618,14 @@ function renderPcb(){
     lineChart(document.getElementById("pcostc"), D.months, cser,
       {w:520,h:210,padR:74,label:"원자재 수입 단가",
        fmtY:v=>"$"+v.toFixed(v<100?1:0), fmtT:v=>"$"+v.toFixed(2)+"/kg"});
+  }
+
+  /* 일본 고부가 비중 추이 — 한국 ASP 선과 같이 읽는 자리 */
+  if (D.intl.ok && document.getElementById("pmix")){
+    lineChart(document.getElementById("pmix"), D.intl.months,
+      [{name:"고부가 비중", c:"--s2", v:ma3(D.intl.mix.m||[])}],
+      {w:980,h:220,padR:96,label:"일본 고부가(다층+빌드업) 생산금액 비중",
+       fmtY:v=>v.toFixed(0)+"%", fmtT:v=>v.toFixed(1)+"%"});
   }
 
   /* 축별 추이 — **공통 기준월** 지수.
