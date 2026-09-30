@@ -50,6 +50,32 @@ NAMES = {
 }
 
 
+# ── e-Stat 응답 replica 로더 ──────────────────────────────────────────────
+# 파일이 tests/ 에 있든 tests/fixtures/ 에 있든 찾는다.
+#
+# ★ 왜 굳이: 이 레포는 zip 으로 파일을 올려 갱신한다. 빈 디렉터리는 git 이
+#   추적하지 않으므로 tests/fixtures/ 가 레포에 없고, 올리는 사람은 자연히
+#   tests/ 에 둔다. 전에는 sys.path 에 없는 경로를 넣어 두고 pytest 가 우연히
+#   tests/ 를 sys.path 에 넣어 주는 덕에 돌고 있었다 — 실행 방식이 바뀌면
+#   ImportError 로 죽고, 그 메시지로는 원인을 알 수 없다.
+_FAKE_DIRS = (ROOT / "tests", ROOT / "tests" / "fixtures")
+
+
+def _fake():
+    """estat_fake 모듈. 없으면 **어디를 찾았는지** 말하고 실패한다."""
+    import importlib.util
+    for d in _FAKE_DIRS:
+        f = d / "estat_fake.py"
+        if f.exists():
+            spec = importlib.util.spec_from_file_location("estat_fake", f)
+            m = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(m)
+            return m
+    raise AssertionError(
+        "estat_fake.py 를 찾지 못했습니다. 다음 중 한 곳에 두세요: "
+        + " 또는 ".join(str(d / "estat_fake.py") for d in _FAKE_DIRS))
+
+
 def _months(n=30, y=2024, m=3):
     out = []
     for _ in range(n):
@@ -450,8 +476,7 @@ def test_collector_end_to_end_on_replica():
       2. 그 표에는 品目 축이 아예 없었다(제목이 곧 한 品目)
       3. time 이름이 和暦('平成20年11月')이라 서기 정규식으로는 못 읽었다
     """
-    sys.path.insert(0, str(ROOT / "tests" / "fixtures"))
-    import estat_fake as FK
+    FK = _fake()
     td = Path(tempfile.mkdtemp()); db = td / "k.sqlite"
     os.environ["EJ_ESTAT_APP_ID"] = "test-only-not-a-real-key"
     try:
@@ -482,8 +507,7 @@ def test_collector_end_to_end_on_replica():
 
 def test_replica_feeds_the_panel():
     """수집한 것이 화면 payload 까지 흘러가는지 — 교차 판정이 나와야 한다."""
-    sys.path.insert(0, str(ROOT / "tests" / "fixtures"))
-    import estat_fake as FK
+    FK = _fake()
     td = Path(tempfile.mkdtemp()); db = td / "k.sqlite"
     _fixture(db)                       # 한국 축 (ASP 상승)
     os.environ["EJ_ESTAT_APP_ID"] = "test-only-not-a-real-key"
@@ -522,8 +546,7 @@ def test_family_is_matched_without_the_year_prefix():
             != IN.norm_title("2025年 時系列表(2350_機械器具月報（その３５）電子部品)"))
     assert IN.norm_title("令和7年 時系列表(X)") == IN.norm_title("2025年 時系列表(X)")
 
-    sys.path.insert(0, str(ROOT / "tests" / "fixtures"))
-    import estat_fake as FK
+    FK = _fake()
     td = Path(tempfile.mkdtemp()); db = td / "k.sqlite"
     os.environ["EJ_ESTAT_APP_ID"] = "test-only-not-a-real-key"
     try:
@@ -553,8 +576,7 @@ def test_high_value_is_ten_plus_layers_not_all_multilayer():
 
 def test_second_run_only_refreshes_recent_vintages():
     """첫 수집은 전 구간, 2회차는 최근 vintage 만. 매달 90여 표를 다시 받을 이유가 없다."""
-    sys.path.insert(0, str(ROOT / "tests" / "fixtures"))
-    import estat_fake as FK
+    FK = _fake()
     td = Path(tempfile.mkdtemp()); db = td / "k.sqlite"
     os.environ["EJ_ESTAT_APP_ID"] = "test-only-not-a-real-key"
     try:
@@ -578,8 +600,7 @@ def test_second_run_only_refreshes_recent_vintages():
 
 def test_legacy_timeseries_table_is_rejected():
     """2010년 시계열표(品目 축 없음)는 **채택되면 안 된다.** 실제로 채택됐던 표다."""
-    sys.path.insert(0, str(ROOT / "tests" / "fixtures"))
-    import estat_fake as FK
+    FK = _fake()
     td = Path(tempfile.mkdtemp()); db = td / "k.sqlite"
     os.environ["EJ_ESTAT_APP_ID"] = "test-only-not-a-real-key"
     try:
@@ -751,8 +772,7 @@ def test_pcb_renders_both_intl_branches():
     except ImportError:                                  # noqa: BLE001
         print("  – playwright 없음 — 건너뜀 (정적 검사는 위 테스트가 한다)")
         return
-    sys.path.insert(0, str(ROOT / "tests" / "fixtures"))
-    import estat_fake as FK
+    FK = _fake()
     html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
 
     for label, with_jp in (("연결 전", False), ("연결 후", True)):
