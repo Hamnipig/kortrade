@@ -200,8 +200,10 @@ jobs:
       #
       # ★ build_pcb.py **앞**에 와야 한다. 최종 수요 축이 수집보다 빌드가 먼저
       #   도는 바람에 패널이 영원히 비었던 적이 있다(2026-09-29).
+      # ★ 「製品月表」 계열은 **표 하나가 한 달**이라 첫 수집이 vintage 90여 건을
+      #   이어받는다(2~5분). 2회차부터는 최근 15개 vintage 만 다시 받는다.
       - name: 수집 — PCB 해외 대조축 (일본 METI)
-        timeout-minutes: 10
+        timeout-minutes: 20
         continue-on-error: true
         env:
           EJ_ESTAT_APP_ID: ${{ secrets.EJ_ESTAT_APP_ID }}
