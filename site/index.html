@@ -262,6 +262,9 @@ const fm = n => n>=1000 ? Math.round(n).toLocaleString() : (n>=100 ? Math.round(
 const pct = n => n==null ? "–" : (n>0?"+":"") + n.toFixed(Math.abs(n)>=100?0:1) + "%";
 const pp  = n => n==null ? "–" : (n>0?"+":"") + n.toFixed(2) + "%p";
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+// 파이썬 쪽 설명문은 **이렇게** 강조를 표시한다. 먼저 이스케이프하고 그다음
+// 강조만 되살린다 — 순서를 바꾸면 설명문에 태그를 넣어 화면을 깨뜨릴 수 있다.
+const mdb = s => esc(s).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
 
 const tip = document.getElementById("tip");
 function showTip(ev, html){
@@ -2103,6 +2106,482 @@ function renderWatchlist(WL){
   }).join("");
 }
 
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PCB·기판
+
+   이 탭의 중심은 **ASP($/kg)** 다. 이유가 하나뿐이라 분명하다.
+
+   한국 HS 8534(인쇄회로)에는 층수 구분이 없다. 한국 HSK 세 개는 '형성된 회로의
+   종류'로 갈린다(테이프·리드프레임형 / 수동소자 형성 / 기타). 층수 세분은
+   **중국 체계**이고 코드 번호가 겹쳐 혼동하기 쉽다.
+
+   그래서 AI 서버용 고다층·패키지기판으로의 전환은 한국 데이터에서 금액으로
+   보이지 않는다. 금액 ÷ 중량 = ASP 로만 보인다.
+     iM증권 PCB Tracker 2026-08 실측: 수출액 +15% / 중량 −3% / ASP +18%
+   금액만 보는 화면에서는 "+15% 성장" 하나로 끝난다. 물량이 오히려 줄었다는
+   사실이 빠지면 고부가 전환이라는 해석 자체가 성립하지 않는다.
+
+   ★ 중량은 **국가 축에서만** 온다. 시군구 API 에는 중량 필드가 없고,
+     2026-09-01 지침으로 시군구 중량·HSK10 은 비공개가 됐다. 지역 축은 금액만이다.
+   ══════════════════════════════════════════════════════════════════════════ */
+const PCB_KEY = "pcb";
+let PCB = null;
+const PGCOL = {board:"--s1", material:"--s3", equipment:"--s4"};
+const PQV = {mix_up:"vd-good", premium_expansion:"vd-good", volume_growth:"",
+             price_led:"vd-loc", flat:"vd-na", push:"vd-bad", price_erosion:"vd-mix",
+             volume_decline:"vd-mix", contracting:"vd-bad", unknown:"vd-na",
+             turnaround:"vd-good", accelerating:"vd-good", bottoming:"vd-loc",
+             steady:"", decelerating:"vd-mix", mergeable:"vd-good",
+             caution:"vd-mix", separate:"vd-bad", cost_push:"vd-mix"};
+const pvb = v => v ? `<span class="vdi ${PQV[v.code]||""}" title="${esc(v.note||"")}">${
+  esc(v.label)}</span>` : "–";
+
+/* 단가 국면 지도. drawNationQuad 와 형태는 같지만 축 범위를 **데이터에서** 잡는다 —
+   PCB 의 월별 변동폭은 화장품보다 훨씬 좁아서, 고정 범위를 쓰면 점이 전부
+   한가운데 뭉쳐 국면이 안 보인다. */
+function drawPcbQuad(mount, pts, aLab){
+  if (!mount) return;
+  const live = pts.filter(p=>p.qtyYoy!=null && p.priceYoy!=null && p.usd>0);
+  if (live.length < 2){
+    mount.innerHTML = '<p class="pnote">물량·단가를 둘 다 낼 수 있는 항목이 부족합니다 '+
+      '(중량 '+(PCB?PCB.minWgtKg.toLocaleString():"1,000")+'kg 미만은 단가를 내지 않습니다).</p>';
+    return;
+  }
+  const W=760,H=400,M={t:18,r:26,b:46,l:58}, iw=W-M.l-M.r, ih=H-M.t-M.b;
+  const span = (vals, floor) => {
+    const a = Math.max(floor, Math.max(...vals.map(v=>Math.abs(v)))*1.3);
+    return [-a, a];
+  };
+  const [cx0,cx1] = span(live.map(p=>p.qtyYoy), 12);
+  const [cy0,cy1] = span(live.map(p=>p.priceYoy), 10);
+  const X = v => M.l + (Math.min(cx1,Math.max(cx0,v))-cx0)/(cx1-cx0)*iw;
+  const Y = v => M.t + ih - (Math.min(cy1,Math.max(cy0,v))-cy0)/(cy1-cy0)*ih;
+  const maxU = Math.max(...live.map(p=>p.usd));
+  const R = u => 5 + Math.sqrt(Math.max(u,0)/maxU)*24;
+  const s = el("svg",{viewBox:`0 0 ${W} ${H}`,role:"img","aria-label":"물량 대비 단가 변화 사분면"});
+
+  // 좌상(물량↓ 단가↑ = 고부가 믹스 전환)이 이 산업에서 찾는 칸이다.
+  // 우하(물량↑ 단가↓ = 밀어내기)는 경고색.
+  s.appendChild(el("rect",{x:M.l,y:M.t,width:Math.max(0,X(0)-M.l),
+    height:Math.max(0,Y(0)-M.t),fill:cv("--s3"),opacity:.055}));
+  s.appendChild(el("rect",{x:X(0),y:Y(0),width:Math.max(0,M.l+iw-X(0)),
+    height:Math.max(0,M.t+ih-Y(0)),fill:cv("--crit"),opacity:.045}));
+
+  const ticks = (lo,hi) => {
+    const step = Math.max(1, Math.round((hi-lo)/6));
+    const out=[]; for(let v=Math.ceil(lo/step)*step; v<=hi; v+=step) out.push(v);
+    if(!out.includes(0)) out.push(0);
+    return out.sort((a,b)=>a-b);
+  };
+  ticks(cy0,cy1).forEach(v=>{
+    s.appendChild(el("line",{x1:M.l,x2:M.l+iw,y1:Y(v),y2:Y(v),class:v===0?"ax":"gl"}));
+    s.appendChild(Object.assign(el("text",{x:M.l-8,y:Y(v)+3.5,class:"tk","text-anchor":"end"}),
+      {textContent:(v>0?"+":"")+v+"%"}));
+  });
+  ticks(cx0,cx1).forEach(v=>{
+    s.appendChild(el("line",{y1:M.t,y2:M.t+ih,x1:X(v),x2:X(v),class:v===0?"ax":"gl"}));
+    s.appendChild(Object.assign(el("text",{x:X(v),y:M.t+ih+16,class:"tk","text-anchor":"middle"}),
+      {textContent:(v>0?"+":"")+v+"%"}));
+  });
+  const quad=(x,y,t,a)=>s.appendChild(Object.assign(
+    el("text",{x,y,class:"quad","text-anchor":a}),{textContent:t}));
+  quad(M.l+4,    M.t+13,   "물량↓ 단가↑ · 고부가 믹스 전환", "start");
+  quad(M.l+iw-4, M.t+13,   "물량↑ 단가↑ · 프리미엄 확산", "end");
+  quad(M.l+4,    M.t+ih-6, "물량↓ 단가↓ · 수축", "start");
+  quad(M.l+iw-4, M.t+ih-6, "물량↑ 단가↓ · 밀어내기(마진 경고)", "end");
+  s.appendChild(Object.assign(el("text",{x:M.l+iw/2,y:H-6,class:"tk","text-anchor":"middle"}),
+    {textContent:"물량(중량) YoY →"}));
+  s.appendChild(Object.assign(el("text",{x:14,y:M.t+ih/2,class:"tk","text-anchor":"middle",
+    transform:`rotate(-90 14 ${M.t+ih/2})`}),{textContent:"ASP($/kg) YoY"}));
+
+  const placed=[];
+  live.slice().sort((a,b)=>b.usd-a.usd).forEach(p=>{
+    const x=X(p.qtyYoy), y=Y(p.priceYoy), r=R(p.usd);
+    const out = p.qtyYoy<cx0||p.qtyYoy>cx1||p.priceYoy<cy0||p.priceYoy>cy1;
+    const c = cv(p.hub ? "--s4" : (p.kind==="code" ? "--s2" : "--s1"));
+    const g = el("g",{});
+    g.appendChild(el("circle",{cx:x,cy:y,r:r+2,fill:cv("--surface")}));
+    g.appendChild(el("circle",{cx:x,cy:y,r,fill:c,opacity:out?.25:(p.hub?.28:.5),
+      stroke:c,"stroke-width":p.hub?2:1.5,"stroke-dasharray":p.hub?"4 3":(out?"3 2":"")}));
+    g.style.cursor="pointer";
+    g.addEventListener("mousemove", e=>showTip(e,
+      `<b>${esc(p.name)}</b> ${p.hub?'<span class="pu warn">중계 허브</span>':""}<br>`+
+      `금액 $${fm(p.usd)}M · YoY ${pct(p.valueYoy)}<br>`+
+      `물량 YoY ${pct(p.qtyYoy)}<br>`+
+      `ASP $${p.asp==null?"–":p.asp.toLocaleString()}/kg · YoY ${pct(p.priceYoy)}<br>`+
+      `${esc(p.verdict?.label||"")}${p.hub&&p.why?"<br>※ "+esc(p.why):""}`+
+      (out?"<br>※ 축 범위 밖(점선)":"")));
+    g.addEventListener("mouseleave", hideTip);
+    s.appendChild(g);
+    if (r >= 11){
+      const txt = p.name.length>11 ? p.name.slice(0,10)+"…" : p.name;
+      const w = [...txt].reduce((a,ch)=>a+(/[ㄱ-힝]/.test(ch)?11.2:6),0)+6;
+      const free=(lx,ly)=> lx-w/2>M.l+2 && lx+w/2<M.l+iw-2 && ly>M.t+10 && ly<M.t+ih-4 &&
+        !placed.some(q=>Math.abs(q.x-lx)<(q.w+w)/2+8 && Math.abs(q.y-ly)<15);
+      let put=null;
+      for (const dy of [-(r+7), r+15, -(r+21), r+29]){ if(free(x,y+dy)){put={x,y:y+dy};break;} }
+      if (put){
+        s.appendChild(Object.assign(el("text",{x:put.x,y:put.y,class:"dlab",
+          "text-anchor":"middle"}),{textContent:txt}));
+        placed.push({x:put.x,y:put.y,w});
+      }
+    }
+  });
+  mount.innerHTML=""; mount.appendChild(s);
+}
+
+/* 금액과 물량을 같은 100 에서 출발시킨다. 두 선이 벌어진 만큼이 ASP 다 —
+   ★ 계열마다 제 첫 값을 100 으로 잡으면 시작점이 다를 때 비교가 무의미해지므로
+     둘 다 **같은 달**을 기준으로 쓴다(최종 수요 축에서 겪은 함정). */
+function pcbIndex(D){
+  const u = D.headline.m.usd, w = D.headline.m.wgt;
+  let b = -1;
+  for (let i=0;i<u.length;i++) if (u[i] && w[i]) { b=i; break; }
+  if (b < 0) return null;
+  const nz = (a,i) => a[i] ? +(a[i]/a[b]*100).toFixed(1) : null;
+  return {base: D.months[b],
+          usd: u.map((_,i)=>nz(u,i)), wgt: w.map((_,i)=>nz(w,i))};
+}
+
+function renderPcb(){
+  const v = document.getElementById("view");
+  if (!PCB){
+    v.innerHTML = `<div class="empty"><h3>PCB·기판 — 아직 수집 전입니다</h3>
+      <p>수출 금액·<b>중량</b>·단가(ASP)를 함께 보는 레이어입니다. 중량은 품목별
+      국가별 API 에서만 오므로 워치리스트 수집이 먼저 돌아야 합니다.</p>
+      <code>python scripts/run_watchlist.py &amp;&amp; python scripts/build_pcb.py</code></div>`;
+    return;
+  }
+  const D = PCB, h = D.headline, hw = h.window, hm = h.month, hr = h.recent;
+  const idx = pcbIndex(D);
+  const nOk = D.verify.filter(r=>r.counted).length;
+  const nBad = D.verify.filter(r=>!r.counted && r.status!=="draft").length;
+  const cty = (D.countries||[]).map(c=>({...c, kind:"cty", why:c.hubWhy}));
+  const codePts = (D.items||[]).filter(r=>r.counted && r.group==="board")
+    .map(r=>({...r, kind:"code", name:r.label, hub:false}));
+
+  v.innerHTML = `
+    <div class="stats">
+      <div class="stat"><div class="k">수출액 — 단월 ${esc(h.asOfMonth)}</div>
+        <div class="v ${hm.valueYoy>0?"up":"down"}">${pct(hm.valueYoy)}</div>
+        <div class="d">$${fm(hm.usd/1e6)}M · 최근 ${D.recent}M ${pct(hr.valueYoy)}</div></div>
+      <div class="stat"><div class="k">중량 — 단월</div>
+        <div class="v ${hm.qtyYoy>0?"up":"down"}">${pct(hm.qtyYoy)}</div>
+        <div class="d">${D.window}개월 ${pct(hw.qtyYoy)}</div></div>
+      <div class="stat"><div class="k">ASP ($/kg) — 단월</div>
+        <div class="v ${hm.priceYoy>0?"up":"down"}">${pct(hm.priceYoy)}</div>
+        <div class="d">$${hm.asp==null?"–":hm.asp.toLocaleString()}/kg${
+          h.aspNowIsMax?" · <b>시계열 최고</b>":
+          (h.aspMax?` · 최고 $${h.aspMax} (${esc(h.aspMaxAt)})`:"")}</div></div>
+      <div class="stat"><div class="k">국면 — 최근 ${D.recent}개월</div>
+        <div class="v" style="font-size:17px;line-height:1.3">${esc(hr.verdict.label)}</div>
+        <div class="d">단가 기여 ${hr.priceShare==null?"–":hr.priceShare+"%"}</div></div>
+      <div class="stat"><div class="k">완제품+소재 (${D.window}M)</div>
+        <div class="v">$${fm(D.total.usd)}M</div>
+        <div class="d">YoY ${pct(D.total.yoy)} → ${pct(D.total.recentYoy)}</div></div>
+    </div>
+    <div class="thesis">
+      <b>금액이 아니라 단가를 봅니다.</b> 한국 HS 8534 에는 층수 구분이 없습니다 —
+      한국 HSK 세 개는 '형성된 회로의 종류'로 갈리고, 다층/양면/단면 세분은
+      <b>중국 체계</b>입니다(코드 번호가 겹쳐 혼동하기 쉽습니다).
+      그래서 AI 서버용 고다층·패키지기판으로의 믹스 전환은 금액으로 보이지 않고
+      <b>ASP($/kg)로만</b> 보입니다. 같은 "+${
+        hw.valueYoy==null?"?":Math.round(hw.valueYoy)}%" 라도 물량이 늘어서인지
+      단가가 올라서인지에 따라 투자 판단이 갈립니다.
+    </div>
+
+    <div class="panels">
+      <section class="panel p7">
+        <div class="phead"><h2 class="ptitle">수출 단가(ASP) 추이</h2>
+          <span class="unit">$/kg · 3개월 이동평균</span></div>
+        <p class="pnote">${mdb(h.caveat)}</p>
+        <div id="pasp"></div>
+      </section>
+
+      <section class="panel p5">
+        <div class="phead"><h2 class="ptitle">금액 vs 물량</h2>
+          <span class="unit">${idx?esc(idx.base)+" = 100 · 3개월 이동평균":"—"}</span></div>
+        <p class="pnote">두 선이 <b>벌어진 만큼이 단가</b>입니다. 금액만 오르고 물량이
+          눕거나 빠지면 고부가 믹스 전환, 물량만 오르고 금액이 못 따라오면 밀어내기입니다.</p>
+        <div class="legend">
+          <span class="lg"><span class="sw" style="background:var(--s1)"></span>수출액</span>
+          <span class="lg"><span class="sw" style="background:var(--s3)"></span>중량(톤)</span></div>
+        <div id="pidx"></div>
+      </section>
+
+      <section class="panel p7">
+        <div class="phead"><h2 class="ptitle">단가 국면 지도</h2>
+          <span class="unit">버블 = 최근 ${D.window}개월 규모 · ±${D.flatPct}% 는 보합</span></div>
+        <p class="pnote"><b>왼쪽 위</b>가 이 산업에서 찾는 칸입니다 — 물량은 줄었는데
+          단가가 올랐다면 저가 물량을 밀어내고 고다층·패키지기판으로 옮겨가는 중입니다.
+          오른쪽 아래(밀어내기)는 다음 분기 마진으로 돌아옵니다.
+          <span style="color:var(--s4)">점선 원</span>은 중계 허브(최종 소비지가 아님)입니다.</p>
+        <div class="legend">
+          <span class="lg"><span class="sw" style="background:var(--s2)"></span>HSK 코드</span>
+          <span class="lg"><span class="sw" style="background:var(--s1)"></span>국가</span>
+          <span class="lg"><span class="sw" style="background:var(--s4)"></span>중계 허브</span></div>
+        <div id="pquad"></div>
+      </section>
+
+      <section class="panel p5">
+        <div class="phead"><h2 class="ptitle">지역별 수출</h2>
+          <span class="unit">최근 ${D.window}개월 · 백만 USD</span></div>
+        <div id="pplaces"></div>
+      </section>
+
+      <section class="panel p12">
+        <div class="phead"><h2 class="ptitle">축별 월별 추이</h2>
+          <span class="unit" id="pgunit">지수 · 3개월 이동평균</span></div>
+        <p class="pnote">소재(CCL·동박·감광재)를 사야 기판을 만들고, 장비(CAPEX)는 그보다
+          앞섭니다. <b>규모가 아니라 모양을 비교하는 자리</b>라 지수로 그립니다 —
+          완제품이 소재의 몇 배라 금액으로 그리면 소재·장비가 바닥에 붙어 선후행이
+          보이지 않습니다. 금액은 바로 아래 표에 있습니다. 범례를 눌러 계열을 켜고 끌 수
+          있습니다. <b>장비는 수요 합계에서 뺐습니다</b> — 증설의 흐름이지 수요의 흐름이
+          아닙니다.</p>
+        <div class="legend" id="lg-pg"></div>
+        <div id="pgroups"></div>
+        <div class="tscroll" style="margin-top:12px">
+          <table class="wt"><thead><tr>
+            <th class="l">축</th><th>규모</th><th>${D.window}M YoY</th>
+            <th>최근 ${D.recent}M</th><th>가속</th>
+            <th>물량 YoY</th><th>ASP YoY</th><th class="l">판정</th></tr></thead>
+          <tbody>${(D.groups||[]).map(g=>`<tr>
+            <td class="l"><span class="sw" style="display:inline-block;background:var(${
+              PGCOL[g.group]||"--s5"});margin-right:6px"></span>${esc(g.label)}</td>
+            <td>$${fm(g.usd)}M</td>
+            <td class="${g.yoy>0?"up":"down"}">${pct(g.yoy)}</td>
+            <td class="${g.recentYoy>0?"up":"down"}">${pct(g.recentYoy)}</td>
+            <td>${g.accel==null?"–":(g.accel>0?"+":"")+g.accel+"%p"}</td>
+            <td>${pct(g.pq?.qtyYoy)}</td>
+            <td>${pct(g.pq?.priceYoy)}</td>
+            <td class="l">${pvb(g.verdict)}</td></tr>`).join("")}</tbody></table></div>
+      </section>
+
+      <section class="panel p6">
+        <div class="phead"><h2 class="ptitle">원가 대조 — 단가가 오른 이유</h2>
+          <span class="unit">수입 $/kg</span></div>
+        <p class="pnote">구리가 오르면 믹스가 그대로여도 ASP 는 오릅니다. CCL·동박
+          <b>수입</b> 단가를 같이 놓고, 원가로 설명되지 않는 부분만 믹스로 읽어야 합니다.</p>
+        <div id="pcost"></div>
+      </section>
+
+      <section class="panel p6">
+        <div class="phead"><h2 class="ptitle">선후행 — 무엇이 끌고 있나</h2>
+          <span class="unit">전월비 증감률 시차 상관</span></div>
+        <p class="pnote">장비 → 소재 → 완제품 순서로 물결이 지나갑니다. 시차 <b>k</b>는
+          앞 단계가 몇 개월 먼저 움직이는지입니다. r 이 낮으면 선후행이 확인되지 않은
+          것이고, 그 사실도 정보입니다.</p>
+        <div class="tscroll"><table class="wt"><thead><tr>
+          <th class="l">선행</th><th class="l">후행</th><th>최적 시차</th><th>r</th>
+          <th class="l">시차별 r</th></tr></thead><tbody>
+          ${(D.leadlag||[]).map(l=>`<tr>
+            <td class="l">${esc(l.leadLabel)}</td><td class="l">${esc(l.lagLabel)}</td>
+            <td>${l.bestK==null?"–":l.bestK+"M"}</td>
+            <td>${l.bestR==null?"–":l.bestR}</td>
+            <td class="l hsk" style="white-space:normal">${
+              l.rows.map(r=>`${r.k}:${r.r==null?"·":r.r.toFixed(2)}`).join("  ")}</td>
+          </tr>`).join("")}</tbody></table></div>
+      </section>
+
+      <section class="panel p12">
+        <div class="phead"><h2 class="ptitle">국가별 단가 · 확산도</h2>
+          <span class="unit">최근 ${D.window}개월</span></div>
+        <p class="pnote">같은 성장이라도 대상국마다 뜻이 다릅니다. <b>중계 허브</b>(홍콩·
+          베트남)는 최종 소비지가 아니라 재수출·해외 조립라인이라, 여기서 늘어난 물량을
+          수요로 읽으면 두 번 세게 됩니다. 그래서 확산도를 <b>허브 포함/제외 두 벌</b>로 냅니다.</p>
+        ${D.breadth ? `<div class="sig">
+          <div class="sigcard"><h4>허브 포함</h4><div class="sub">상위 ${
+            D.breadth.topN}개국 비중</div><ol>
+            <li><span class="nm">${D.breadth.all.now.topShare}%</span>
+              <span class="vl">${pp(D.breadth.all.verdict.chg)}</span></li>
+            <li><span class="nm">${esc(D.breadth.all.verdict.label)}</span></li></ol></div>
+          <div class="sigcard"><h4>허브 제외</h4><div class="sub">${
+            esc((D.breadth.hub.codes||[]).join("·")||"—")} 제외</div><ol>
+            <li><span class="nm">${D.breadth.exHub.now.topShare}%</span>
+              <span class="vl">${pp(D.breadth.exHub.verdict.chg)}</span></li>
+            <li><span class="nm">${esc(D.breadth.exHub.verdict.label)}</span></li></ol></div>
+          <div class="sigcard"><h4>허브 물량</h4><div class="sub">재수출·해외 조립</div><ol>
+            <li><span class="nm">$${fm((D.breadth.hub.usd||0)/1e6)}M</span>
+              <span class="vl">${D.breadth.hub.share==null?"–":D.breadth.hub.share+"%"}</span></li>
+            <li><span class="nm">YoY</span>
+              <span class="vl ${D.breadth.hub.yoy>0?"up":"down"}">${pct(D.breadth.hub.yoy)}</span></li>
+          </ol></div></div>` : ""}
+        <div class="tscroll" style="margin-top:14px"><table class="wt"><thead><tr>
+          <th class="l">국가</th><th>금액</th><th>비중</th><th>금액 YoY</th>
+          <th>물량 YoY</th><th>ASP</th><th>ASP YoY</th><th>단가 기여</th>
+          <th class="l">국면</th></tr></thead><tbody>
+          ${cty.map(c=>`<tr>
+            <td class="l">${esc(c.name)}${c.hub?` <span class="pu warn" title="${
+              esc(c.hubWhy)}">중계 허브</span>`:""}</td>
+            <td>$${fm(c.usd)}M</td>
+            <td>${c.share==null?"–":c.share+"%"}</td>
+            <td class="${c.valueYoy>0?"up":"down"}">${pct(c.valueYoy)}</td>
+            <td>${pct(c.qtyYoy)}</td>
+            <td>${c.asp==null?"–":"$"+c.asp.toLocaleString()}</td>
+            <td class="${c.priceYoy>0?"up":"down"}">${pct(c.priceYoy)}</td>
+            <td>${c.priceShare==null?"–":c.priceShare+"%"}</td>
+            <td class="l">${pvb(c.verdict)}</td></tr>`).join("")}
+        </tbody></table></div>
+      </section>
+
+      <section class="panel p12">
+        <div class="phead"><h2 class="ptitle">해외 대조축 — 아직 연결 전</h2>
+          <span class="unit">전부 무료 출처</span></div>
+        <p class="pnote">${mdb(D.intl.why)}</p>
+        <div class="tscroll"><table class="wt"><thead><tr>
+          <th class="l">축</th><th class="l">출처</th><th class="l">공표 시차</th>
+          <th class="l">필요한 키</th><th class="l">왜 필요한가</th></tr></thead><tbody>
+          ${(D.intl.items||[]).map(i=>`<tr class="itemrow">
+            <td class="l">${esc(i.name)}</td>
+            <td class="l dimc">${esc(i.who)}</td>
+            <td class="l hsk">${esc(i.lag||"–")}</td>
+            <td class="l">${i.have?'<span class="pu high">보유</span>':
+              (i.needKey?`<span class="tk">${esc(i.needKey)}</span>`:
+                '<span class="pu">키 불필요</span>')}</td>
+            <td class="l dimc" style="max-width:420px;white-space:normal">${mdb(i.why)}</td>
+          </tr>`).join("")}</tbody></table></div>
+      </section>
+
+      <section class="panel p12">
+        <div class="phead"><h2 class="ptitle">코드 검증</h2>
+          <span class="unit">집계 ${nOk}개 · 대조 실패 ${nBad}개 · 측정만 ${
+            (D.drafts||[]).length}개</span></div>
+        <p class="pnote">HSK 코드는 관세율표 품명까지 확인했지만 관세청 OpenAPI 실측 전입니다
+          (<code>probe</code>). 그래서 <b>응답의 품명이 기대 문자열과 맞아야</b> 집계에
+          들어갑니다 — 사람의 기억이 아니라 매월 응답이 판정합니다.
+          맞지 않는 코드는 아래에 이유와 함께 남습니다.</p>
+        <div class="tscroll"><table class="wt"><thead><tr>
+          <th class="l">코드</th><th class="l">이름</th><th class="l">축</th>
+          <th>규모</th><th class="l">순도</th><th class="l">기대 품명</th>
+          <th class="l">응답 품명</th><th class="l">처리</th></tr></thead><tbody>
+          ${(D.verify||[]).map(r=>`<tr class="itemrow${r.counted?"":" dim"}">
+            <td class="l hsk">${esc(r.code)}</td>
+            <td class="l">${esc(r.label)}</td>
+            <td class="l dimc">${esc((D.groups.find(g=>g.group===r.group)||{}).label
+              || r.group)}</td>
+            <td>${r.usd==null?"–":"$"+fm(r.usd)+"M"}</td>
+            <td class="l"><span class="pu${r.purity==="high"?" high":
+              (r.purity==="low"||r.purity==="unknown"?" warn":"")}">${esc(r.purity||"–")}</span></td>
+            <td class="l hsk">${esc(r.expect||"–")}</td>
+            <td class="l dimc" style="max-width:300px;white-space:normal">${esc(r.name||"–")}</td>
+            <td class="l">${r.counted?'<span class="vdi vd-good">집계</span>':
+              (r.status==="draft"?'<span class="vdi vd-na">측정만</span>':
+               `<span class="vdi vd-bad" title="${esc(r.why)}">제외</span>`)}</td>
+          </tr>
+          <tr class="idearow dim"><td class="l idea" colspan="8">${mdb(r.why)}${
+            r.note?" — "+mdb(r.note):""}</td></tr>`).join("")}
+        </tbody></table></div>
+        ${(D.merge||[]).length?`<p class="pnote" style="margin-top:12px">
+          <b>합산 검사</b> — 이 프로젝트는 월별 증감률 상관 r ≥ 0.6 일 때만 두 코드를
+          합칩니다. ${D.merge.map(m=>`${esc(m.aLabel)} vs ${esc(m.bLabel)}:
+          r=${m.r==null?"–":m.r} ${pvb(m.verdict)}`).join(" · ")}</p>`:""}
+        ${(D.rejected||[]).length?`<p class="pnote" style="margin-top:10px">
+          <b>제외한 코드</b> — ${D.rejected.map(r=>`${esc(r.label)}(${esc(r.code)})`)
+            .join(" · ")}. 근거는 <code>config/pcb.yaml</code> 에 남겼습니다.</p>`:""}
+      </section>
+    </div>`;
+
+  lineChart(document.getElementById("pasp"), D.months,
+    [{name:"수출 ASP", c:"--s1", v:ma3(h.m.asp)}],
+    {w:520,h:250,padR:74,label:"PCB 수출 단가 추이",
+     fmtY:v=>"$"+Math.round(v), fmtT:v=>"$"+v.toFixed(1)+"/kg"});
+
+  if (idx){
+    lineChart(document.getElementById("pidx"), D.months,
+      [{name:"수출액", c:"--s1", v:ma3(idx.usd)},
+       {name:"중량", c:"--s3", v:ma3(idx.wgt)}],
+      {w:520,h:250,padR:62,label:"금액 vs 물량 지수",
+       fmtY:v=>Math.round(v), fmtT:v=>v.toFixed(0)});
+  } else {
+    document.getElementById("pidx").innerHTML =
+      '<p class="pnote">금액과 중량이 함께 잡히는 달이 없어 지수를 만들 수 없습니다.</p>';
+  }
+
+  drawPcbQuad(document.getElementById("pquad"), codePts.concat(cty));
+
+  /* 지역 — 리포트 그림16~21 에 해당한다. 중량이 없으므로 **금액만**이다. */
+  const pl = D.places;
+  const ph = document.getElementById("pplaces");
+  if (!pl.ok){
+    ph.innerHTML = `<p class="pnote">${mdb(pl.note)}</p>`;
+  } else {
+    ph.innerHTML = `<p class="pnote">${mdb(pl.note)}</p>
+      <div class="sig" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+        ${pl.rows.slice(0,8).map(r=>{
+          const sp = (r.m||[]).filter(x=>x!=null);
+          return `<div class="sigcard"><h4>${esc(r.place.split(" ").pop())}${
+            r.pinned?'':' <span class="pu">순위</span>'}</h4>
+            <div class="sub" title="${esc(r.why||"")}">$${fm(r.usd)}M</div>
+            <ol><li><span class="nm">${D.window}M</span>
+              <span class="vl ${r.yoy>0?"up":"down"}">${pct(r.yoy)}</span></li>
+            <li><span class="nm">최근 ${D.recent}M</span>
+              <span class="vl ${r.recentYoy>0?"up":"down"}">${pct(r.recentYoy)}</span></li></ol>
+            ${sp.length>3?sparkSVG(sp, PGCOL.board):""}</div>`;
+        }).join("")}
+      </div>
+      <p class="pnote" style="margin-top:10px">${mdb(pl.warn)}</p>`;
+  }
+
+  /* 원가 — CCL·동박 수입 단가와, 원가로 설명되지 않는 잔차 */
+  const ch = document.getElementById("pcost");
+  const cser = (D.costs||[]).map((c,i)=>({name:c.label, c:SER[i % SER.length],
+                                          v:ma3(c.priceSeries||[])}));
+  ch.innerHTML = `<div id="pcostc"></div>
+    <div class="tscroll" style="margin-top:10px"><table class="wt"><thead><tr>
+      <th class="l">원가</th><th>수입액</th><th>수입 YoY</th><th>수입단가</th>
+      <th>3M 모멘텀</th><th>시차</th><th>β</th><th>R²</th></tr></thead><tbody>
+      ${(D.costs||[]).map(c=>`<tr>
+        <td class="l">${esc(c.label)}</td>
+        <td>$${fm(c.impUsd)}M</td>
+        <td class="${c.impYoy>0?"up":"down"}">${pct(c.impYoy)}</td>
+        <td>${c.price==null?"–":"$"+c.price}</td>
+        <td class="${c.priceMom3>0?"up":"down"}">${pct(c.priceMom3)}</td>
+        <td>${c.lag==null?"–":c.lag+"M"+(c.lagIdentified?"":"?")}</td>
+        <td>${c.beta==null?"–":c.beta}</td>
+        <td>${c.r2==null?"–":c.r2}</td></tr>`).join("")}
+    </tbody></table></div>
+    <p class="pnote" style="margin-top:10px">${
+      D.spread.linked
+        ? `${pvb(D.spread.verdict)} ${mdb(D.spread.note)}`
+        : mdb(D.spread.note)}</p>`;
+  if (cser.length){
+    lineChart(document.getElementById("pcostc"), D.months, cser,
+      {w:520,h:210,padR:74,label:"원자재 수입 단가",
+       fmtY:v=>"$"+v.toFixed(v<100?1:0), fmtT:v=>"$"+v.toFixed(2)+"/kg"});
+  }
+
+  /* 축별 추이 — **공통 기준월** 지수.
+     ★ 계열마다 제 첫 값을 100 으로 잡으면 시작점이 다를 때 "폭증"이 만들어진다.
+       (최종 수요 축에서 실제로 겪었다 — 신설 품목이 100 에서 출발해 폭증으로 보였다.)
+       세 축이 **모두 살아 있는 첫 달**을 하나 골라 거기서 같이 출발시킨다. */
+  const gm = (D.groups||[]).map(g=>g.m||[]);
+  let gb = -1;
+  for (let i=0;i<D.months.length;i++){ if (gm.length && gm.every(a=>a[i])) { gb=i; break; } }
+  const gser = (D.groups||[]).map((g,j)=>({
+    name:g.label, c:PGCOL[g.group]||"--s5", off:false,
+    v: ma3(gb<0 ? (g.m||[]) : (g.m||[]).map(x=>x==null?null:+(x/gm[j][gb]*100).toFixed(1)))}));
+  const gu = document.getElementById("pgunit");
+  if (gu) gu.textContent = gb<0 ? "백만 USD · 3개월 이동평균"
+                                : D.months[gb] + " = 100 · 3개월 이동평균";
+  const drawG = () => lineChart(document.getElementById("pgroups"), D.months, gser,
+    {w:980,h:270,padR:150,label:"축별 월별 수출 추이",
+     fmtY:v=>Math.round(v), fmtT:v=>v.toFixed(1)});
+  const lgp = document.getElementById("lg-pg");
+  lgp.innerHTML = gser.map((s,i)=>`<button class="lg" type="button" data-i="${i}"
+    aria-pressed="true"><span class="sw" style="background:var(${s.c})"></span>${
+      esc(s.name)}</button>`).join("");
+  lgp.addEventListener("click", e=>{
+    const b=e.target.closest(".lg"); if(!b) return;
+    const i=+b.dataset.i;
+    if (gser.filter(s=>!s.off).length===1 && !gser[i].off) return;
+    gser[i].off=!gser[i].off;
+    b.setAttribute("aria-pressed", String(!gser[i].off));
+    drawG();
+  });
+  drawG();
+}
+
 /* ================= shell ================= */
 const SCAN_KEY = "scan";
 const BAT_KEY = "battery";
@@ -2114,6 +2593,7 @@ function selectTab(key){
   [...document.querySelectorAll(".tab")].forEach(b =>
     b.setAttribute("aria-selected", String(b.dataset.key === key)));
   if (key === BAT_KEY){ renderBattery(); return; }
+  if (key === PCB_KEY){ renderPcb(); return; }
   if (key === SCAN_KEY){
     if (WATCH || UNI || FLASH) renderScan(WATCH);
     else document.getElementById("view").innerHTML =
@@ -2137,18 +2617,20 @@ function selectTab(key){
 // (초기에 manifest 로딩 실패가 스캐너까지 같이 죽이는 구조였다)
 Promise.allSettled([getJSON("data/manifest.json"), getJSON("data/watchlist.json"),
                     getJSON("data/universe.json"), getJSON("data/chains.json"),
-                    getJSON("data/flash.json"), getJSON("data/battery.json")])
-  .then(([mr, wr, ur, cr, fr, br]) => {
+                    getJSON("data/flash.json"), getJSON("data/battery.json"),
+                    getJSON("data/pcb.json")])
+  .then(([mr, wr, ur, cr, fr, br, pr]) => {
     MANIFEST = mr.status === "fulfilled" ? mr.value : {sectors: []};
     WATCH    = wr.status === "fulfilled" ? wr.value : null;
     UNI      = ur.status === "fulfilled" ? ur.value : null;
     CHAINS   = cr.status === "fulfilled" ? cr.value : null;
     FLASH    = fr.status === "fulfilled" ? fr.value : null;
     BAT      = br.status === "fulfilled" ? br.value : null;
+    PCB      = pr.status === "fulfilled" ? pr.value : null;
     if (!FLASH) scanPane = UNI ? "uni" : "wl";
     const m = MANIFEST, ready = (m.sectors||[]).filter(s=>s.ready);
 
-    if (!ready.length && !WATCH && !UNI && !FLASH && !BAT){
+    if (!ready.length && !WATCH && !UNI && !FLASH && !BAT && !PCB){
       document.getElementById("view").innerHTML = `
         <div class="empty">
           <h3>아직 데이터가 없습니다</h3>
@@ -2171,17 +2653,28 @@ Promise.allSettled([getJSON("data/manifest.json"), getJSON("data/watchlist.json"
     const nScan = FLASH ? `${FLASH.asOf.period} ${FLASH.asOf.label}`
       : (UNI ? UNI.totals.nHs4 + "개 항"
       : (WATCH ? WATCH.items.filter(r=>r.ready).length + "품목" : "미수집"));
-    document.getElementById("tabs").innerHTML =
-      `<button class="tab" role="tab" data-key="${SCAN_KEY}" aria-selected="false">
-        전산업 스캐너<span class="tnum">${esc(nScan)}</span></button>` +
-      (BAT ? `<button class="tab" role="tab" data-key="${BAT_KEY}" aria-selected="false">
-        2차전지·ESS<span class="tnum">${esc(BAT.total.verdict.label)}</span></button>` : "") +
-      // 수집되지 않은 섹터는 탭을 내지 않는다. '미수집' 딱지만 붙은 탭은
-      // 누를 게 없는데 자리만 차지하고, 같은 이름의 새 레이어와 겹쳐 보인다
-      // (실제로 '2차전지·ESS' 가 두 개로 보였다).
-      (m.sectors||[]).filter(s=>s.ready).map(s=>
-      `<button class="tab" role="tab" data-key="${esc(s.key)}" aria-selected="false">
-        ${esc(s.name)}<span class="tnum">$${fm(s.ytd)}M</span></button>`).join("");
+    // 탭은 **배열로** 만든다. PCB 는 심화 레이어지만 화장품 바로 옆에 와야 해서
+    // (사용자 요청) 섹터 목록 사이에 끼워 넣어야 하기 때문이다. 문자열 연결로는
+    // '섹터 앞' 아니면 '섹터 뒤' 둘 중 하나밖에 안 된다.
+    //
+    // ★ 수집되지 않은 섹터는 탭을 내지 않는다. '미수집' 딱지만 붙은 탭은 누를 게
+    //   없는데 자리만 차지하고, 같은 이름의 새 레이어와 겹쳐 보인다
+    //   (실제로 '2차전지·ESS' 가 두 개로 보였다).
+    const tabs = [{key:SCAN_KEY, name:"전산업 스캐너", num:nScan}];
+    if (BAT) tabs.push({key:BAT_KEY, name:"2차전지·ESS", num:BAT.total.verdict.label});
+    const secTabs = (m.sectors||[]).filter(s=>s.ready)
+      .map(s=>({key:s.key, name:s.name, num:"$"+fm(s.ytd)+"M"}));
+    if (PCB){
+      // 단월 ASP YoY 를 배지로 — 이 탭에서 제일 먼저 봐야 할 숫자가 단가다.
+      const pnum = PCB.headline.month.priceYoy;
+      const pTab = {key:PCB_KEY, name:"PCB기판",
+                    num:"ASP " + (pnum==null ? "–" : pct(pnum))};
+      const at = secTabs.findIndex(t=>t.key==="cosmetics");
+      secTabs.splice(at < 0 ? secTabs.length : at + 1, 0, pTab);
+    }
+    document.getElementById("tabs").innerHTML = tabs.concat(secTabs).map(t=>
+      `<button class="tab" role="tab" data-key="${esc(t.key)}" aria-selected="false">
+        ${esc(t.name)}<span class="tnum">${esc(t.num)}</span></button>`).join("");
     document.getElementById("tabs").addEventListener("click", e=>{
       const b=e.target.closest(".tab"); if(b) selectTab(b.dataset.key);
     });
@@ -2198,12 +2691,14 @@ Promise.allSettled([getJSON("data/manifest.json"), getJSON("data/watchlist.json"
 
     const want = location.hash.slice(1);
     const known = want === SCAN_KEY || (BAT && want === BAT_KEY)
+      || (PCB && want === PCB_KEY)
       || (m.sectors||[]).some(s=>s.key===want && s.ready);
     // ★ ready[0].key 로 바로 가면, 섹터 수집이 실패해 ready 가 비었을 때
     //   undefined.key 로 페이지 전체가 죽는다 (배터리 데이터만 있어도 마찬가지였다).
     //   살아 있는 레이어를 순서대로 찾아 떨어지고, 아무것도 없으면 안내를 띄운다.
     const fallback = (WATCH||UNI||FLASH) ? SCAN_KEY
-                   : (BAT ? BAT_KEY : (ready[0] ? ready[0].key : null));
+                   : (BAT ? BAT_KEY
+                   : (PCB ? PCB_KEY : (ready[0] ? ready[0].key : null)));
     if (known || fallback) selectTab(known ? want : fallback);
     else document.getElementById("view").innerHTML =
       `<div class="empty"><h3>아직 수집된 데이터가 없습니다</h3>
@@ -2213,13 +2708,15 @@ Promise.allSettled([getJSON("data/manifest.json"), getJSON("data/watchlist.json"
 
 const reflow = () => {
   if (CUR === BAT_KEY && BAT) renderBattery();
+  else if (CUR === PCB_KEY && PCB) renderPcb();
   else if (CUR === SCAN_KEY && (WATCH||UNI||FLASH)) renderScan(WATCH);
   else if (CUR && CACHE[CUR]) renderSector(CACHE[CUR]);
 };
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", reflow);
 addEventListener("hashchange", () => {
   const k = location.hash.slice(1);
-  if (k && k !== CUR && (k === SCAN_KEY || MANIFEST?.sectors.some(s=>s.key===k))) selectTab(k);
+  if (k && k !== CUR && (k === SCAN_KEY || (BAT && k === BAT_KEY) || (PCB && k === PCB_KEY)
+      || MANIFEST?.sectors.some(s=>s.key===k))) selectTab(k);
 });
 </script>
 </body>
