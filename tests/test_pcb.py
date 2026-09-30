@@ -348,7 +348,13 @@ def test_intl_config_valid():
     assert "statsDataId" not in src.replace("statsDataId 를", "").replace(
         "statsDataId 는", "").replace("statsDataId 의", "") or True
     cfgsrc = (ROOT / "scripts" / "run_pcb_intl.py").read_text(encoding="utf-8")
-    assert "getStatsList" in cfgsrc and "discover" in cfgsrc, "매번 찾지 않고 ID 를 박았다"
+    assert "getStatsList" in cfgsrc, "매번 찾지 않고 ID 를 박았다"
+    # 설정에 statsDataId 상수가 들어가는 순간 통계표 재편에 무방비가 된다
+    import yaml as _y
+    raw = _y.safe_load((ROOT / "config" / "pcb_intl.yaml").read_text(encoding="utf-8"))
+    flat = json.dumps(raw, ensure_ascii=False)
+    assert "statsDataId" not in flat and "statsdataid" not in flat.lower(), \
+        "설정에 statsDataId 를 박았다 — 재편되면 조용히 빈 데이터가 쌓인다"
     print(f"  ✓ 해외 설정 — 品目 {len(c.items)}개 · 지표 {len(c.measures)}개 · "
           f"미연결 {len(c.pending)}건 · 크레디트 문구 포함")
 
@@ -409,6 +415,169 @@ def test_intl_contradiction_is_reported():
     assert it["cross"]["verdict"]["code"] == "mix_contradicted", it["cross"]
     assert "구리" in it["cross"]["verdict"]["note"]
     print(f"  ✓ 반대 방향 — [{it['cross']['verdict']['label']}] 로 경고")
+
+
+def _run_collector(monkey_get, db, start="2019-01"):
+    """실측 모양을 흉내낸 응답으로 수집기를 통째로 돌린다.
+
+    API 에 붙지 않고도 검색 → 후보 검증 → vintage 이어붙이기 → 파싱까지
+    전 경로가 돈다. 첫 수집이 0행으로 끝난 세 가지 원인이 여기서 잡힌다.
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "rpi", ROOT / "scripts" / "run_pcb_intl.py")
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    mod._get = monkey_get
+    mod.VERIFY = db.parent / "pcb_intl_verify.json"
+    argv = sys.argv
+    sys.argv = ["run_pcb_intl.py", "--db", str(db), "--start", start]
+    try:
+        rc = mod.main()
+    finally:
+        sys.argv = argv
+    return rc, json.loads(mod.VERIFY.read_text(encoding="utf-8"))
+
+
+def test_collector_end_to_end_on_replica():
+    """실측 응답 모양 그대로 돌려 **행이 실제로 쌓이는지** 본다.
+
+    첫 수집(2026-09-30)이 0행으로 끝난 원인 셋을 한꺼번에 고정한다.
+      1. 최신성이 점수에 없어 2010년 표가 1위로 올라갔다
+      2. 그 표에는 品目 축이 아예 없었다(제목이 곧 한 品目)
+      3. time 이름이 和暦('平成20年11月')이라 서기 정규식으로는 못 읽었다
+    """
+    sys.path.insert(0, str(ROOT / "tests" / "fixtures"))
+    import estat_fake as FK
+    td = Path(tempfile.mkdtemp()); db = td / "k.sqlite"
+    os.environ["EJ_ESTAT_APP_ID"] = "test-only-not-a-real-key"
+    try:
+        rc, v = _run_collector(FK.fake_get, db)
+    finally:
+        os.environ.pop("EJ_ESTAT_APP_ID", None)
+    assert rc == 0, rc
+    est = v["estat"]
+    assert est["ok"] is True, est
+    # 2010년 시계열표가 아니라 品目 축을 가진 製品月表 가 뽑혀야 한다
+    assert "製品月表" in (est.get("title") or ""), est.get("title")
+    assert est["to"] == "2026-08", est
+    assert est["from"] <= "2019-01", est
+    # 표 하나가 한 달인 계열이므로 이어붙이기가 돌았어야 한다
+    assert v.get("stitch") and v["stitch"]["addedRows"] > 0, v.get("stitch")
+    with Store(db) as s:
+        ser = s.demand(IN.SOURCE)
+    for k in ("jp:multilayer:amt", "jp:buildup:amt", "jp:flexible:amt",
+              "jp:multilayer:qty", "jp:multilayer:stock"):
+        assert k in ser and len(ser[k]) >= 80, (k, len(ser.get(k, {})))
+    # 出荷는 '-'(비수치)로만 왔다 — 0 으로 채워 넣으면 안 된다
+    assert not (ser.get("jp:multilayer:ship") or {}), "비수치 기호를 값으로 넣었다"
+    print(f"  ✓ 실측 replica 수집 — 표 {est['statsDataId']} · {est['from']}~{est['to']} · "
+          f"{est['rows']:,}행 · vintage {v['stitch']['siblings']}건 이어붙임")
+
+
+def test_replica_feeds_the_panel():
+    """수집한 것이 화면 payload 까지 흘러가는지 — 교차 판정이 나와야 한다."""
+    sys.path.insert(0, str(ROOT / "tests" / "fixtures"))
+    import estat_fake as FK
+    td = Path(tempfile.mkdtemp()); db = td / "k.sqlite"
+    _fixture(db)                       # 한국 축 (ASP 상승)
+    os.environ["EJ_ESTAT_APP_ID"] = "test-only-not-a-real-key"
+    try:
+        _run_collector(FK.fake_get, db)
+    finally:
+        os.environ.pop("EJ_ESTAT_APP_ID", None)
+    pl = _build(db)
+    it = pl["intl"]
+    assert it["ok"], it.get("note")
+    assert it["asOf"] == "2026-08", it["asOf"]
+    assert it["mix"]["chg"] > 0, it["mix"]
+    assert it["cross"]["verdict"]["code"] == "mix_confirmed", it["cross"]
+    # 단위가 원문 그대로 붙어야 한다 (百万円 → 億円 환산을 우리가 하지 않는다)
+    ml = next(r for r in it["rows"] if r["key"] == "multilayer")
+    assert ml["amt"]["unit"] == "百万円", ml["amt"]
+    # 재고순환 — 관세 통계에 없는 축이라 일본에서만 나온다
+    assert ml["stock"]["ratio"] is not None and ml["stock"]["ratioChg"] is not None, ml["stock"]
+    print(f"  ✓ 화면 연결 — 기준월 {it['asOf']} · 고부가 {it['mix']['prev']}→"
+          f"{it['mix']['now']}% · 단위 {ml['amt']['unit']} · "
+          f"[{it['cross']['verdict']['label']}]")
+
+
+def test_second_run_only_refreshes_recent_vintages():
+    """첫 수집은 전 구간, 2회차는 최근 vintage 만. 매달 90여 표를 다시 받을 이유가 없다."""
+    sys.path.insert(0, str(ROOT / "tests" / "fixtures"))
+    import estat_fake as FK
+    td = Path(tempfile.mkdtemp()); db = td / "k.sqlite"
+    os.environ["EJ_ESTAT_APP_ID"] = "test-only-not-a-real-key"
+    try:
+        _, v1 = _run_collector(FK.fake_get, db)
+        _, v2 = _run_collector(FK.fake_get, db)
+    finally:
+        os.environ.pop("EJ_ESTAT_APP_ID", None)
+    assert v1["stitch"]["fullRefresh"] is True, v1["stitch"]
+    assert v2["stitch"]["fullRefresh"] is False, v2["stitch"]
+    assert v2["stitch"]["siblings"] < v1["stitch"]["siblings"], (v1["stitch"], v2["stitch"])
+    # 2회차에도 최신월은 그대로 있어야 한다 (줄인 게 데이터를 깎으면 안 된다)
+    assert v2["estat"]["to"] == v1["estat"]["to"] == "2026-08"
+    with Store(db) as s:
+        ser = s.demand(IN.SOURCE)
+    assert len(ser["jp:multilayer:amt"]) >= 80
+    print(f"  ✓ 2회차 — vintage {v1['stitch']['siblings']}건 → "
+          f"{v2['stitch']['siblings']}건, 최신월 {v2['estat']['to']} 유지")
+
+
+def test_legacy_timeseries_table_is_rejected():
+    """2010년 시계열표(品目 축 없음)는 **채택되면 안 된다.** 실제로 채택됐던 표다."""
+    sys.path.insert(0, str(ROOT / "tests" / "fixtures"))
+    import estat_fake as FK
+    td = Path(tempfile.mkdtemp()); db = td / "k.sqlite"
+    os.environ["EJ_ESTAT_APP_ID"] = "test-only-not-a-real-key"
+    try:
+        _, v = _run_collector(FK.fake_get, db)
+    finally:
+        os.environ.pop("EJ_ESTAT_APP_ID", None)
+    assert "主要製品統計表" not in (v["estat"].get("title") or "")
+    # 옛 표가 후보에는 있었는데도 안 뽑혔는지 확인한다 —
+    # 후보에 아예 없었다면 이 테스트는 아무것도 보장하지 않는다.
+    titles = [c["title"] for c in v["search"]["top"]]
+    legacy = [c for c in v["search"]["top"] if "主要製品統計表" in c["title"]]
+    picked = v["estat"]["statsDataId"]
+    assert all(c["id"] != picked for c in legacy), (picked, titles[:3])
+    if legacy:
+        # 점수에서도 밀려야 한다 (최신성 가점이 없으면 여기서 뒤집힌다)
+        assert max(c["score"] for c in legacy) < min(
+            c["score"] for c in v["search"]["top"] if "製品月表" in c["title"])
+    rejected = [p for p in v.get("probes", []) if not p["ok"]]
+    for p in rejected:
+        assert p["reason"], p
+    # surveyYears 필터가 옛 표를 먼저 걸러 주지만, 검색을 넓히는 2·3차 패스에서
+    # 다시 들어올 수 있다. **점수만으로도** 밀리는지 직접 확인한다.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "rpi2", ROOT / "scripts" / "run_pcb_intl.py")
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    c = IN.load()
+    old_t = {"stat": "経済産業省生産動態統計", "cycle": "月次", "rows": 42, "year": 2010,
+             "title": "主要製品統計表（時系列） １３４．電子回路基板"}
+    new_t = {"stat": "経済産業省生産動態統計", "cycle": "月次", "rows": 122, "year": 2026,
+             "title": "製品月表 ３５．電子部品"}
+    so, sn = mod.score_table(old_t, c, 2026), mod.score_table(new_t, c, 2026)
+    assert sn > so, f"점수로도 최신 표가 이겨야 한다: 옛 {so} vs 새 {sn}"
+    print(f"  ✓ 옛 시계열표(品目 축 없음) 배제 — 검색 후보 {len(legacy)}건, "
+          f"점수 비교 옛 {so} < 새 {sn}, 검증 {len(v.get('probes', []))}건 중 "
+          f"{len(rejected)}건 탈락")
+
+
+def test_measure_exclude_separates_production_from_stock():
+    """生産·出荷·在庫가 한 축에 있다. '金額' 하나로 맞추면 셋이 섞인다."""
+    c = IN.load()
+    got = {n: (IN.pick_measure(n, c.measures) or type("x", (), {"key": None})).key
+           for n in ("生産　金額(百万円)", "在庫　金額(百万円)", "出荷　金額(百万円)",
+                     "生産　数量(千個)")}
+    assert got["生産　金額(百万円)"] == "amt", got
+    assert got["在庫　金額(百万円)"] == "stock", got
+    assert got["出荷　金額(百万円)"] == "ship", got
+    assert got["生産　数量(千個)"] == "qty", got
+    assert IN.unit_from_name("生産　金額(百万円)") == "百万円"
+    print(f"  ✓ 生産/在庫/出荷 분리 — {got}")
 
 
 def test_intl_key_absent_exits_zero():
