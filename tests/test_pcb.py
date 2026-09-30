@@ -435,6 +435,41 @@ def test_intl_cross_check_reads_mix():
           f"({it['mix']['chg']}%p) [{it['cross']['verdict']['label']}]")
 
 
+def test_cross_check_aligns_periods_when_japan_lags():
+    """일본 「時系列表」는 **연 1회 공표**라 한국보다 몇 달 뒤처진다.
+
+    2026-09-30 실측: 한국 2026-08 / 일본 2025-12 — **8개월 차이**.
+    그대로 맞대면 2026년 한국 단가와 2025년 일본 믹스를 비교하게 된다.
+    교차 판정은 두 축을 같은 기간으로 맞춰 계산해야 한다.
+    """
+    td = Path(tempfile.mkdtemp()); db = td / "p.sqlite"
+    kr_months = _fixture(db)                       # 한국: ~2026-08
+    jp_months = [m for m in kr_months if m <= "2025-12"]
+    with Store(db) as s:
+        s.upsert_demand(_jp_rows(jp_months, hv_up=True))
+    pl = _build(db)
+    it, cx = pl["intl"], pl["intl"]["cross"]
+    assert it["ok"], it.get("note")
+    assert it["asOf"] == "2025-12" and pl["asOf"] == "2026-08", (it["asOf"], pl["asOf"])
+    assert cx["lagMonths"] == 8, cx
+    assert cx["aligned"] is True, cx
+    assert cx["window"] == "2025-10~2025-12", cx["window"]
+    # 판정에 쓰는 값은 **정렬된 값**이어야 한다
+    assert cx["krAspYoy"] == cx["krAspYoyAligned"], cx
+    assert cx["krAspYoyLatest"] is not None
+    assert cx["krAspYoy"] != cx["krAspYoyLatest"], \
+        "기간이 다른데 같은 값이면 정렬이 안 된 것이다"
+    assert "8개월 뒤" in cx["note"] and cx["window"] in cx["note"], cx["note"]
+    # 연결된 축은 '아직 붙이지 않은 축' 목록에서 연결됨으로 표시돼야 한다
+    jp = next(i for i in it["items"] if i["key"] == "jp_meti")
+    assert jp["connected"] is True and not jp["needKey"], jp
+    tw = next(i for i in it["items"] if i["key"] == "tw_moea")
+    assert tw["connected"] is False, tw
+    print(f"  ✓ 기간 정렬 — 일본 {it['asOf']} / 한국 {pl['asOf']} ({cx['lagMonths']}개월 차) · "
+          f"판정창 {cx['window']} · 한국 ASP 정렬 {cx['krAspYoyAligned']}% "
+          f"vs 최신 {cx['krAspYoyLatest']}% · [{cx['verdict']['label']}]")
+
+
 def test_intl_contradiction_is_reported():
     """일본 고부가 비중이 **빠지는데** 한국 ASP 가 오르면 경고여야 한다."""
     td = Path(tempfile.mkdtemp()); db = td / "p.sqlite"
