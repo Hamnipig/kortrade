@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from kortrade import breadth as BR
 from kortrade import flash as F
+from kortrade import intl as IN
 from kortrade import pcb as P
 from kortrade import pq as PQ
 from kortrade import watchlist as W
@@ -174,22 +175,159 @@ def build_places(store: Store, cfg: P.PcbConfig, months, cur, prev, q3, q3p) -> 
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 6. 해외 대조축 — 아직 연결 전
+# 6. 해외 대조축 — 일본 METI 品目別 생산
+#
+# 왜 이게 화면에 있어야 하는가.
+#   한국 ASP 가 올랐을 때 그것이 (a)고다층·패키지기판으로의 믹스 전환인지
+#   (b)구리 가격·환율인지를 **한국 데이터만으로는 가를 수 없다.** HS 8534 에
+#   층수 구분이 없기 때문이다. 일본 METI 는 品目別(片面/両面/多層/ビルドアップ/
+#   フレキシブル) 생산액을 주므로 고부가 비중의 방향을 따로 볼 수 있다.
+#
+# ★ 두 나라 숫자를 **더하지 않는다.** 엔 vs 달러, 생산 vs 수출, 모집단도 다르다.
+#   방향의 일치/불일치만 읽는다. 일치하면 근거가 둘, 엇갈리면 경고다.
 # ══════════════════════════════════════════════════════════════════════════
 
-def build_intl(cfg: P.PcbConfig) -> dict:
+def build_intl(cfg: P.PcbConfig, store: Store | None = None,
+               kr_asp_yoy: float | None = None) -> dict:
+    declared = [{"key": i.key, "name": i.name, "who": i.who, "needKey": i.need_key,
+                 "free": i.free, "have": i.have, "signup": i.signup,
+                 "lag": i.lag, "why": " ".join((i.why or "").split())}
+                for i in cfg.intl]
+    why = ("한국 데이터만으로는 **믹스**(고다층·패키지기판 비중)와 **재고순환**을 "
+           "볼 수 없습니다. 한국 HS 8534 에 층수 구분이 없고, 관세 통계에는 "
+           "재고 개념 자체가 없기 때문입니다. 일본 METI 가 전자를, 대만 MOEA 가 "
+           "후자를 줍니다.")
+    off = {"ok": False, "items": declared, "why": why,
+           "note": "리포트 표1 의 일본(METI)·대만(MOEA)·북미(GEA) 축은 아직 붙이지 "
+                   "않았습니다. 전부 무료 출처이고 조사는 끝났습니다."}
+    if store is None:
+        return off
+    try:
+        ic = IN.load()
+    except Exception:                                    # noqa: BLE001
+        return off
+
+    verify = {}
+    vf = ROOT / "data" / "pcb_intl_verify.json"
+    if vf.exists():
+        try:
+            verify = json.loads(vf.read_text(encoding="utf-8"))
+        except Exception:                                # noqa: BLE001
+            verify = {}
+    ev = verify.get("estat") or {}
+
+    ser = store.demand(IN.SOURCE)
+    if not ser:
+        off["note"] = ("일본 축(METI/e-Stat)은 키가 등록됐는지와 무관하게 아직 "
+                       "데이터가 없습니다. scripts/run_pcb_intl.py 가 한 번도 "
+                       "성공하지 못했을 수 있습니다 — data/pcb_intl_verify.json 을 "
+                       "보십시오.")
+        off["diag"] = ev
+        return off
+
+    # 일본 축은 **자기 달력을 쓴다.** 한국 관세청과 공표 시차가 달라서 억지로
+    # 맞추면 최신월이 통째로 빈다. 있는 달을 그대로 쓰고 기준월을 따로 적는다.
+    months = sorted({p for s in ser.values() for p in s})[-cfg.hist:]
+    if len(months) < 13:
+        off["note"] = (f"일본 축 월 수가 {len(months)}개뿐이라 전년 동월 비교를 "
+                       f"만들 수 없습니다.")
+        off["diag"] = ev
+        return off
+    latest = months[-1]
+    cur3 = months[-cfg.recent:]
+    prev3 = [F.shift(p, -12) for p in cur3]
+
+    def win(key, ps):
+        s_ = ser.get(key) or {}
+        vals = [s_.get(p) for p in ps if s_.get(p) is not None]
+        return sum(vals) if vals else None
+
+    def yoy(key, a, b):
+        n, o = win(key, a), win(key, b)
+        return None if (n is None or not o) else round((n / o - 1) * 100, 1)
+
+    def unit_of(key):
+        # 단위는 응답이 준 문자열을 그대로 쓴다. 百万円↔億円 환산을 우리가
+        # 가정하면 그 가정이 숫자를 만든다.
+        return (ev.get("units") or {}).get(key, "")
+
+    amt_tot = {p: 0.0 for p in months}
+    for i in ic.items:
+        k = IN.series_key(i.key, "amt")
+        if i.key == "pcb_total":
+            continue                    # 계는 합계에 넣지 않는다 — 이중계상
+        for p in months:
+            v = (ser.get(k) or {}).get(p)
+            if v:
+                amt_tot[p] += v
+
+    def hv_share(p):
+        tot = amt_tot.get(p) or 0.0
+        if tot <= 0:
+            return None
+        hv = sum(((ser.get(IN.series_key(k, "amt")) or {}).get(p) or 0.0)
+                 for k in P.HIGH_VALUE_JP)
+        return round(hv / tot * 100, 1)
+
+    mix_m = [hv_share(p) for p in months]
+    def mix_win(ps):
+        tot = sum((amt_tot.get(p) or 0.0) for p in ps)
+        if tot <= 0:
+            return None
+        hv = sum(((ser.get(IN.series_key(k, "amt")) or {}).get(p) or 0.0)
+                 for k in P.HIGH_VALUE_JP for p in ps)
+        return round(hv / tot * 100, 1)
+    mix_now, mix_prev = mix_win(cur3), mix_win(prev3)
+    mix_chg = (None if (mix_now is None or mix_prev is None)
+               else round(mix_now - mix_prev, 1))
+
+    rows = []
+    for i in ic.items:
+        ka, kq = IN.series_key(i.key, "amt"), IN.series_key(i.key, "qty")
+        sa = ser.get(ka) or {}
+        got = bool(sa) or bool(ser.get(kq))
+        share_now = share_prev = None
+        if i.key != "pcb_total":
+            tn = sum((amt_tot.get(p) or 0.0) for p in cur3)
+            tp = sum((amt_tot.get(p) or 0.0) for p in prev3)
+            if tn > 0:
+                share_now = round((win(ka, cur3) or 0.0) / tn * 100, 1)
+            if tp > 0:
+                share_prev = round((win(ka, prev3) or 0.0) / tp * 100, 1)
+        rows.append({
+            "key": i.key, "label": i.label, "why": i.why, "seen": got,
+            "highValue": i.key in P.HIGH_VALUE_JP,
+            "amt": {"now": _r(sa.get(latest), 1), "unit": unit_of(ka),
+                    "yoy": yoy(ka, [latest], [F.shift(latest, -12)]),
+                    "recentYoy": yoy(ka, cur3, prev3),
+                    "m": [_r(sa.get(p), 1) for p in months]},
+            "qty": {"yoy": yoy(kq, [latest], [F.shift(latest, -12)]),
+                    "recentYoy": yoy(kq, cur3, prev3)},
+            "share": share_now, "sharePrev": share_prev,
+            "shareChg": (None if (share_now is None or share_prev is None)
+                         else round(share_now - share_prev, 1)),
+        })
+
     return {
-        "ok": False,
-        "note": "리포트 표1 의 일본(METI)·대만(MOEA)·북미(GEA) 축은 아직 붙이지 "
-                "않았습니다. 전부 무료 출처이고 조사는 끝났습니다.",
-        "why": "한국 데이터만으로는 **믹스**(고다층·패키지기판 비중)와 **재고순환**을 "
-               "볼 수 없습니다. 한국 HS 8534 에 층수 구분이 없고, 관세 통계에는 "
-               "재고 개념 자체가 없기 때문입니다. 일본 METI 가 전자를, 대만 MOEA 가 "
-               "후자를 줍니다.",
-        "items": [{"key": i.key, "name": i.name, "who": i.who, "needKey": i.need_key,
-                   "free": i.free, "have": i.have, "signup": i.signup,
-                   "lag": i.lag, "why": " ".join((i.why or "").split())}
-                  for i in cfg.intl],
+        "ok": True,
+        "asOf": latest, "months": months,
+        "source": {"who": "経済産業省生産動態統計調査 (e-Stat API)",
+                   "statsDataId": ev.get("statsDataId"), "title": ev.get("title"),
+                   "cycle": ev.get("cycle"), "from": ev.get("from"), "to": ev.get("to"),
+                   "rows": ev.get("rows"), "missing": ev.get("missing") or []},
+        "credit": ic.credit,
+        "rows": rows,
+        "mix": {"label": "고부가 비중 (다층 + 빌드업 다층)",
+                "now": mix_now, "prev": mix_prev, "chg": mix_chg, "m": mix_m,
+                "note": "일본 생산금액에서 다층·빌드업이 차지하는 비중입니다. "
+                        "한국에는 이 구분이 아예 없습니다 — 그래서 이 축을 둡니다."},
+        "cross": {"krAspYoy": kr_asp_yoy, "jpMixChg": mix_chg,
+                  "verdict": P.mix_cross(kr_asp_yoy, mix_chg)},
+        "why": why,
+        "note": "일본은 **생산**, 한국은 **수출**입니다. 단위도 모집단도 달라 "
+                "두 숫자를 더하지 않습니다 — 방향만 나란히 놓고 봅니다.",
+        "items": declared,
+        "diag": ev,
     }
 
 
@@ -471,7 +609,8 @@ def build(store: Store, cfg: P.PcbConfig) -> dict | None:
 
     # ── 5·6 ──────────────────────────────────────────────────────────────
     places = build_places(store, cfg, months, cur, prev, q3, q3p)
-    intl = build_intl(cfg)
+    # 한국 ASP 의 최근창 YoY 를 넘겨 일본 品目別 비중과 교차검증시킨다
+    intl = build_intl(cfg, store, head["recent"]["priceYoy"])
 
     drafts = [r for r in items if r["status"] == "draft"]
 
@@ -558,11 +697,25 @@ def main() -> int:
                   f"{str(r['recentYoy']):>7}%{'  (고정)' if r['pinned'] else ''}")
     else:
         print(f"  지역 — {pl['note']}")
-    print("  해외 대조축 — 미연결:")
-    for i in payload["intl"]["items"]:
-        need = i["needKey"] or "키 불필요"
-        print(f"    {i['name']:<28} {i['who'][:34]:<34} {need}"
-              + ("  (보유)" if i["have"] else ""))
+    it = payload["intl"]
+    if it.get("ok"):
+        print(f"  해외 대조축 — 일본 METI {it['asOf']} (표 {it['source']['statsDataId']})")
+        for r in it["rows"]:
+            print(f"    {r['label']:<24} 금액YoY {str(r['amt']['yoy']):>7}% "
+                  f"최근 {str(r['amt']['recentYoy']):>7}% · 비중 "
+                  f"{str(r['share']):>5}% ({str(r['shareChg'])}%p)"
+                  + ("" if r["seen"] else "  ← 데이터 없음"))
+        m = it["mix"]
+        print(f"    고부가 비중 {m['prev']}% → {m['now']}% ({m['chg']}%p)  "
+              f"[{it['cross']['verdict']['label']}]")
+        if it["source"]["missing"]:
+            print(f"    ※ 못 받은 계열: {it['source']['missing']}")
+    else:
+        print(f"  해외 대조축 — 미연결: {it['note'][:80]}")
+        for i in it["items"]:
+            need = i["needKey"] or "키 불필요"
+            print(f"    {i['name']:<28} {i['who'][:34]:<34} {need}"
+                  + ("  (보유)" if i["have"] else ""))
     return 0
 
 

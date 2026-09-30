@@ -33,6 +33,7 @@ MODULES = [
     "kortrade.watchlist", "kortrade.chains", "kortrade.flash", "kortrade.battery",
     "kortrade.kpi", "kortrade.discover", "kortrade.localization",
     "kortrade.pq", "kortrade.breadth", "kortrade.demand", "kortrade.pcb",
+    "kortrade.intl",
 ]
 
 # 설정은 '읽히는 것'만으로 부족하다 — validate() 까지 통과해야 수집이 의미를 갖는다.
@@ -43,6 +44,7 @@ CONFIGS = [
     ("2차전지", "kortrade.battery"),
     ("최종 수요", "kortrade.demand"),
     ("PCB·기판", "kortrade.pcb"),
+    ("PCB 해외축", "kortrade.intl"),
 ]
 
 # 수집·빌드 스크립트. import 만 해 본다(main 은 실행하지 않는다).
@@ -50,7 +52,8 @@ SCRIPTS = [
     "run_update", "run_watchlist", "run_universe", "run_flash",
     "build_site", "build_watchlist", "build_universe", "build_chains",
     "build_flash", "build_battery", "build_pcb", "verify_flash", "inspect_flash",
-    "bootstrap_codes", "check_key", "dump_places", "run_demand", "merge_db",
+    "bootstrap_codes", "check_key", "dump_places", "run_demand", "run_pcb_intl",
+    "merge_db",
 ]
 
 
