@@ -293,6 +293,56 @@ def merge_verdict(r: float | None) -> dict:
             "note": f"r={r:.2f} — 경계 구간입니다. 합계와 코드별을 같이 보십시오."}
 
 
+# 고부가로 보는 일본 品目. 한국에는 이 구분이 없다 — 그게 이 축을 두는 이유다.
+HIGH_VALUE_JP = ("multilayer", "buildup")
+
+# 일본 고부가 비중이 이만큼(%p) 움직여야 '믹스가 실제로 움직였다'고 본다.
+MIX_PP = 1.5
+
+
+def mix_cross(kr_asp_yoy: float | None, jp_mix_chg_pp: float | None,
+              flat: float = 3.0, mix_pp: float = MIX_PP) -> dict:
+    """한국 ASP 상승이 **믹스인가 가격인가** — 일본 品目別 비중으로 교차검증.
+
+    한국 HS 8534 에는 층수 구분이 없어 믹스를 직접 볼 수 없다. ASP 에는 품목
+    믹스·구리 가격·환율이 한꺼번에 섞인다. 일본 METI 는 品目別 생산액을 주므로
+    고부가(다층+빌드업) 비중의 방향을 따로 볼 수 있다.
+
+    ★ 두 나라 숫자를 더하지 않는다. 단위도 개념(생산 vs 수출)도 모집단도 다르다.
+      **방향의 일치/불일치**만 읽는다. 일치하면 근거가 둘이 되고, 엇갈리면
+      한국 ASP 를 믹스로 읽지 말라는 경고가 된다.
+    """
+    if kr_asp_yoy is None or jp_mix_chg_pp is None:
+        return {"code": "unknown", "label": "대조 불가",
+                "note": "한국 ASP 또는 일본 品目別 비중 중 한쪽이 없습니다."}
+    up_kr = kr_asp_yoy > flat
+    dn_kr = kr_asp_yoy < -flat
+    up_jp = jp_mix_chg_pp > mix_pp
+    dn_jp = jp_mix_chg_pp < -mix_pp
+    if up_kr and up_jp:
+        return {"code": "mix_confirmed", "label": "믹스 상승 확인",
+                "note": f"한국 ASP {kr_asp_yoy:+.1f}% 와 일본 고부가 비중 "
+                        f"{jp_mix_chg_pp:+.1f}%p 가 같은 방향입니다. 한국 단가 상승을 "
+                        f"고다층·패키지기판 전환으로 읽을 근거가 둘이 됐습니다."}
+    if up_kr and dn_jp:
+        return {"code": "mix_contradicted", "label": "믹스로 읽기 어려움",
+                "note": f"한국 ASP 는 {kr_asp_yoy:+.1f}% 인데 일본 고부가 비중은 "
+                        f"{jp_mix_chg_pp:+.1f}%p 로 반대입니다. 한국 단가 상승은 구리 "
+                        f"가격·환율·두께 쪽일 가능성이 큽니다 — 원가 대조 패널을 보십시오."}
+    if up_kr:
+        return {"code": "mix_unconfirmed", "label": "믹스 미확인",
+                "note": f"한국 ASP 는 {kr_asp_yoy:+.1f}% 지만 일본 고부가 비중은 "
+                        f"{jp_mix_chg_pp:+.1f}%p 로 거의 움직이지 않았습니다. "
+                        f"믹스 전환의 외부 근거가 아직 없습니다."}
+    if dn_kr and dn_jp:
+        return {"code": "mix_down", "label": "믹스 후퇴",
+                "note": f"한국 ASP {kr_asp_yoy:+.1f}% · 일본 고부가 비중 "
+                        f"{jp_mix_chg_pp:+.1f}%p. 양쪽이 같이 빠집니다."}
+    return {"code": "mixed", "label": "혼재",
+            "note": f"한국 ASP {kr_asp_yoy:+.1f}% · 일본 고부가 비중 "
+                    f"{jp_mix_chg_pp:+.1f}%p. 방향이 정리되지 않았습니다."}
+
+
 def asp_caveat(cu_note: str = "") -> str:
     """ASP 를 믹스 지표로 읽을 때의 한계. 화면에 그대로 싣는다."""
     return ("ASP($/kg)는 한국 데이터로 고부가 전환을 볼 수 있는 유일한 창이지만, "
