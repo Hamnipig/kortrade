@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from kortrade import battery as BAT
 from kortrade import chains as C
+from kortrade import pcb as PCB
 from kortrade import watchlist as W
 from kortrade.client import CustomsClient, chunk_periods
 from kortrade.collect import Collector, latest_available_yymm
@@ -74,8 +75,20 @@ def main() -> int:
             print("  -", e)
         return 1
 
+    # PCB 레이어. 수출(HS 8534)과 수입(CCL·동박 원가)을 같은 API 로 같이 받는다.
+    # ★ 중량(expWgt/impWgt)이 이 API 에서만 온다. PCB 탭의 중심축인 ASP 가
+    #   전적으로 여기 달려 있다 — 시군구 API 에는 중량 필드가 없다.
+    pc = PCB.load()
+    perrs = pc.validate()
+    if perrs:
+        print("PCB 설정 오류:")
+        for e in perrs:
+            print("  -", e)
+        return 1
+
     end = args.end or latest_available_yymm()
-    parents = sorted(set(wl.all_parents()) | set(cs.all_parents()) | set(bt.all_parents()))
+    parents = sorted(set(wl.all_parents()) | set(cs.all_parents())
+                     | set(bt.all_parents()) | set(pc.all_parents()))
     nw = len(list(chunk_periods(args.start, end, 12)))
 
     # (6단위, 국가) 조합 — 품목마다 필요한 국가가 다르므로 전조합을 돌지 않는다
@@ -89,6 +102,12 @@ def main() -> int:
     for code in bt.all_codes():
         for mkt in bt.markets:
             pairs.add((code[:6], mkt))
+    # PCB 레이어 — 국가별 P/Q. 같은 +15% 라도 대만향은 단가, 베트남향은 물량일 수
+    # 있고 둘은 투자 판단이 다르다. 허브(HK·VN)는 최종 수요지가 아니라는 표시만 하고
+    # 수집은 한다 — 빼면 '어디로 빠졌는지'를 못 본다.
+    for code in pc.all_codes():
+        for mkt in pc.markets:
+            pairs.add((code[:6], mkt))
     pairs = sorted(pairs)
 
     print(f"수집 구간   : {args.start} ~ {end}  (창 {nw}개)")
@@ -96,6 +115,9 @@ def main() -> int:
     print(f"배터리      : 코드 {len(bt.all_codes())}개 "
           f"(active {len(bt.all_codes()) - len(bt.drafts())} / draft {len(bt.drafts())})"
           f"  ※ 수입 {len(bt.cost)}개 포함")
+    print(f"PCB         : 코드 {len(pc.all_codes())}개 "
+          f"(probe·active {len(pc.all_codes()) - len(pc.drafts())} / "
+          f"draft {len(pc.drafts())})  ※ 중량 포함 — ASP 축의 유일한 출처")
     print(f"품목        : active {len(wl.active())} / 전체 {len(wl.items)}"
           f"  (draft {[i.key for i in wl.items if not i.active]})")
     print(f"전국 합계   : HS6 {len(parents)}개            → {len(parents) * nw:,}콜")

@@ -68,7 +68,7 @@ for i in $(seq 1 "$TRIES"); do
 
   # site/data 는 DB 에서 나오는 파생물이다. 병합했으면 다시 만들어야 맞다.
   # 어느 하나가 실패해도 나머지는 계속 간다 (수집이 부분 실패했을 수 있다).
-  for b in build_site build_watchlist build_universe build_chains build_battery build_flash; do
+  for b in build_site build_watchlist build_universe build_chains build_battery build_pcb build_flash; do
     python "scripts/$b.py" >/dev/null 2>&1 || echo "  (재생성 건너뜀: $b)"
   done
 

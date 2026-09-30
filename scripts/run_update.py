@@ -37,6 +37,10 @@ def main() -> int:
     ap.add_argument("--sectors", default=None,
                     help="'all' 또는 쉼표구분 키(cosmetics,semiconductor). 지정하면 "
                          "config/sectors/*.yaml 의 active 섹터를 전국 시군구로 수집한다.")
+    ap.add_argument("--extra-regions", default=None,
+                    help="섹터 YAML 밖의 심화 레이어를 시군구로 수집한다. 현재 'pcb'. "
+                         "심화 레이어는 config/sectors/*.yaml 이 아니라 자기 설정 "
+                         "파일에 코드를 들고 있어서 --sectors 로는 잡히지 않는다.")
     ap.add_argument("--revision-window", type=int, default=6,
                     help="매번 재수집할 최근 개월 수 (소급 정정 반영)")
     ap.add_argument("--dry-run", action="store_true")
@@ -62,6 +66,29 @@ def main() -> int:
 
     print(f"수집 구간      : {args.start} ~ {end}")
 
+    # 심화 레이어(현재 PCB)의 시군구 축. 섹터 YAML 과 별개의 경로다.
+    #
+    # 왜 따로 있나 — PCB 는 화장품처럼 "한 섹터를 시군구까지 파는" 레이어가
+    # 아니라, 국가 축(중량·ASP)과 시군구 축(금액)을 **같이** 쓰는 심화 레이어다.
+    # config/sectors/pcb.yaml 을 만들어 --sectors 에 태우면 같은 이름의 탭이
+    # 두 개 생긴다 (실제로 '2차전지·ESS' 가 두 개로 보인 적이 있다).
+    extra_region: list[tuple[str, list[str]]] = []
+    for key in [k for k in (args.extra_regions or "").split(",") if k.strip()]:
+        key = key.strip()
+        if key == "pcb":
+            from kortrade import pcb as _PCB
+            _cfg = _PCB.load()
+            _errs = _cfg.validate()
+            if _errs:
+                print("PCB 설정 오류:")
+                for e in _errs:
+                    print("  -", e)
+                return 1
+            extra_region.append((key, list(_cfg.region_codes)))
+        else:
+            print(f"--extra-regions '{key}' 는 알 수 없는 레이어입니다 (허용: pcb)")
+            return 1
+
     if args.sectors:
         # 섹터 모드는 시군구 API 만 쓴다. 위 숫자(국가별/기업 레이어)는 돌지 않으므로 찍지 않는다.
         want = None if args.sectors == "all" else set(args.sectors.split(","))
@@ -72,6 +99,14 @@ def main() -> int:
             n = estimate_calls(len(sec.codes), n_sido, args.start, end)
             est += n
             print(f"  섹터 '{sec.key}' : HS {len(sec.codes)}개 x 시도 {n_sido}개 → 최대 {n:,}콜")
+        print(f"합계(최초 1회) : 최대 {est:,}콜  / 일 예산 9,000콜")
+    elif extra_region:
+        n_sido = len(VERIFIED_SIDO_CODES)
+        est = 0
+        for key, rcs in extra_region:
+            n = estimate_calls(len(rcs), n_sido, args.start, end)
+            est += n
+            print(f"  심화 '{key}' 시군구 : HS {len(rcs)}개 x 시도 {n_sido}개 → 최대 {n:,}콜")
         print(f"합계(최초 1회) : 최대 {est:,}콜  / 일 예산 9,000콜")
     else:
         est_sector = estimate_calls(len(core), len(countries), args.start, end)
@@ -117,14 +152,24 @@ def main() -> int:
                     st = col.collect_region(sido, sec.codes, args.start, end)
                     log.debug("  %s: %s", sido, st)
 
-        if args.layer in ("all", "sector") and not args.sectors:
+        # --- 심화 레이어 시군구 (PCB 등) ---
+        if extra_region:
+            all_sido = store.all_sido_names() or list(VERIFIED_SIDO_CODES.values())
+            for key, rcs in extra_region:
+                log.info("=== 심화 '%s' 시군구 — HS %d개 x 시도 %d개 ===",
+                         key, len(rcs), len(all_sido))
+                for sido in all_sido:
+                    st = col.collect_region(sido, rcs, args.start, end)
+                    log.debug("  %s: %s", sido, st)
+
+        if args.layer in ("all", "sector") and not args.sectors and not extra_region:
             log.info("=== 레이어 1: 섹터 (전국 HS x 국가) ===")
             st = col.collect_sector(core, countries, args.start, end)
             log.info("섹터 국가별: %s", st)
             st = col.collect_sector_total(core, args.start, end)
             log.info("섹터 합계:   %s", st)
 
-        if args.layer in ("all", "company"):
+        if args.layer in ("all", "company") and not extra_region:
             log.info("=== 레이어 2: 기업 (시군구 x HS6) ===")
             st = col.collect_for_companies(comp_cfg, args.start, end)
             log.info("기업 레이어: %s", st)
