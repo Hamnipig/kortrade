@@ -2450,6 +2450,10 @@ function renderPcb(){
           <b>구리값·환율</b>인지는 한국 데이터만으로 못 가릅니다 — HS 8534 에 층수 구분이
           없기 때문입니다. 일본은 品目別로 쪼개 주므로 고부가 비중의 방향을 따로 볼 수
           있습니다. ${mdb(D.intl.note)}</p>
+        <p class="pnote"><b>재고/생산</b>은 일본이 덤으로 주는 축입니다. 관세 통계에는
+          재고 개념 자체가 없어서, 대만 MOEA 를 붙이기 전까지 <b>재고순환을 볼 수 있는
+          유일한 창</b>입니다. 이 비율이 생산보다 먼저 튀면 다음 분기 수출이 꺾입니다
+          (비율 상승은 <span style="color:var(--crit)">빨강</span>으로 표시합니다).</p>
         <div class="sig">
           <div class="sigcard"><h4>${esc(D.intl.mix.label)}</h4>
             <div class="sub">최근 ${D.recent}개월 · 생산금액 기준</div><ol>
@@ -2479,6 +2483,7 @@ function renderPcb(){
         <div class="tscroll" style="margin-top:12px"><table class="wt"><thead><tr>
           <th class="l">품목</th><th>최신월</th><th>금액 YoY</th><th>최근 ${D.recent}M</th>
           <th>수량 YoY</th><th>비중</th><th>비중 변화</th>
+          <th>재고/생산</th><th>재고비율 변화</th>
           <th class="l">왜 보는가</th></tr></thead><tbody>
           ${(D.intl.rows||[]).map(r=>`<tr class="itemrow${r.seen?"":" dim"}">
             <td class="l">${esc(r.label)}${r.highValue?' <span class="pu high">고부가</span>':""}</td>
@@ -2488,6 +2493,9 @@ function renderPcb(){
             <td>${pct(r.qty.recentYoy)}</td>
             <td>${r.share==null?"–":r.share+"%"}</td>
             <td class="${r.shareChg>0?"up":"down"}">${pp(r.shareChg)}</td>
+            <td>${r.stock?.ratio==null?"–":r.stock.ratio.toFixed(2)}</td>
+            <td class="${r.stock?.ratioChg>0?"down":"up"}">${
+              r.stock?.ratioChg==null?"–":(r.stock.ratioChg>0?"+":"")+r.stock.ratioChg.toFixed(2)}</td>
             <td class="l dimc" style="max-width:360px;white-space:normal">${
               r.seen?mdb(r.why):"응답에 이 품목이 없습니다 — data/pcb_intl_verify.json 의 meta.classes 확인"}</td>
           </tr>`).join("")}</tbody></table></div>
@@ -2509,6 +2517,7 @@ function renderPcb(){
           <span class="unit">전부 무료 출처</span></div>
         <p class="pnote">${mdb(D.intl.why)}</p>
         <p class="pnote">${mdb(D.intl.note)}</p>
+        ${intlProbes(D)}
         ${intlDecl(D)}
       </section>`}
 
