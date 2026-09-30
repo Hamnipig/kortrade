@@ -231,6 +231,8 @@ def meta_from_classes(cfg: I.IntlConfig, objs: list) -> tuple[dict, dict]:
                 #   (실측: '生産　金額(百万円)')
                 out["unit"][str(c.get("@code"))] = (str(c.get("@unit") or "")
                                                     or I.unit_from_name(nm))
+                # 이름 하나에 品目·지표·단위가 다 들어 있는 축이 있다
+                # (실측: '製品_0127_…（１０層以上）_B_生産金額_百万円')
         ihit = {}
         for c in classes:
             nm = str(c.get("@name") or "")
@@ -302,15 +304,21 @@ def pull_table(cfg: I.IntlConfig, app_id: str, tid: str) -> tuple[list[dict], di
 
 
 def siblings(cands: list[dict], table: dict, cfg: I.IntlConfig) -> list[dict]:
-    """같은 계열(제목이 같은)의 다른 vintage. 최신부터, 시작 연도 이후만."""
+    """같은 계열의 다른 vintage. 최신부터, 시작 연도 이후만.
+
+    ★ 제목을 **그대로** 비교하면 안 된다. 「2025年 時系列表(…)」 계열은 같은 표의
+      연도판이 제목 앞 연도만 다르다 — 그대로 비교해서 형제가 자기 자신뿐이었고,
+      시계열이 12개월로 끝났다(2026-09-30 실측). 연도 접두사를 떼고 비교한다.
+    """
     start_y = int(cfg.start[:4])
+    key = I.norm_title(table["title"])
 
     def sd(c):
         t = str(c.get("surveyDate") or "")
         return int(t[:6]) if t[:6].isdigit() else 0
 
     out = [c for c in cands
-           if c["title"] == table["title"] and (c["year"] or 0) >= start_y]
+           if I.norm_title(c["title"]) == key and (c["year"] or 0) >= start_y]
     out.sort(key=lambda c: -sd(c))
     return out[:cfg.max_tables]
 
@@ -582,9 +590,13 @@ def main() -> int:
             if k not in best or v > best[k][0]:
                 best[k] = (v, r)
         rows = [r for _, r in best.values()]
-        verify["stitch"] = {"siblings": len(sibs), "pulled": len(pulls),
+        verify["stitch"] = {"family": I.norm_title(table["title"]),
+                            "siblings": len(sibs), "pulled": len(pulls),
                             "addedRows": added, "fullRefresh": full,
-                            "haveMonths": have, "calls": pulls[:40]}
+                            "haveMonths": have,
+                            "ids": [{"id": c["id"], "year": c.get("year"),
+                                     "surveyDate": c.get("surveyDate")} for c in sibs],
+                            "calls": pulls[:40]}
         print(f"  이어붙임: {added:,}행 추가 · 중복 제거 후 {len(rows):,}행")
 
     if not rows:

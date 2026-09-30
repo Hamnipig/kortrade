@@ -364,9 +364,10 @@ def build_intl(cfg: P.PcbConfig, store: Store | None = None,
                    "rows": ev.get("rows"), "missing": ev.get("missing") or []},
         "credit": ic.credit,
         "rows": rows,
-        "mix": {"label": "고부가 비중 (다층 + 빌드업 다층)",
+        "mix": {"label": "고부가 비중 (10층 이상 + 빌드업 다층)",
                 "now": mix_now, "prev": mix_prev, "chg": mix_chg, "m": mix_m,
-                "note": "일본 생산금액에서 다층·빌드업이 차지하는 비중입니다. "
+                "note": "일본 생산금액에서 **10층 이상 다층 + 빌드업 다층**이 "
+                        "차지하는 비중입니다. 4층·6~8층은 범용에 가까워 뺐습니다. "
                         "한국에는 이 구분이 아예 없습니다 — 그래서 이 축을 둡니다."},
         "cross": {"krAspYoy": kr_asp_yoy, "jpMixChg": mix_chg,
                   "verdict": P.mix_cross(kr_asp_yoy, mix_chg)},
