@@ -2246,6 +2246,44 @@ function pcbIndex(D){
 
 /* '무엇을 기다리는지' 표. 연결 전/후 모두 같은 표를 쓴다 — 붙고 나서도
    남은 축이 무엇인지 보여야 다음 순서가 정해진다. */
+/* 연결 전일 때 **왜** 비었는지를 화면에 적는다.
+   ★ 이 함수를 부르면서 정의하지 않아 renderPcb 가 통째로 죽었다(2026-09-30).
+     그러면 탭을 눌러도 #view 가 그대로 남아 '탭이 안 넘어간다'로 보인다.
+     연결된 분기만 테스트하고 있어서 놓쳤다 — 이제 두 분기를 다 렌더한다. */
+function intlProbes(D){
+  const g = D.intl.diag || {};
+  const ps = g.probes || [];
+  const bits = [];
+  if (g.searched != null) bits.push(`검색 ${g.searched}회 · 후보 ${g.candidates ?? "–"}건`);
+  if (g.apiOk != null) bits.push(g.apiOk
+    ? "<b>키와 API 호출은 정상</b> — 통계표 선택·파싱 문제입니다"
+    : "API 응답에 오류가 있었습니다");
+  const head = bits.length ? `<p class="pnote">${bits.join(" · ")}</p>` : "";
+  const tbl = ps.length ? `<div class="tscroll"><table class="wt"><thead><tr>
+      <th class="l">통계표</th><th class="l">제목</th><th>점수</th><th>연도</th>
+      <th>行</th><th>品目</th><th>지표</th><th class="l">판정 · 실제 항목</th>
+      </tr></thead><tbody>
+      ${ps.map(r=>`<tr class="${r.ok?"":"dim"}">
+        <td class="l hsk">${esc(r.id ?? "–")}</td>
+        <td class="l dimc" style="max-width:300px;white-space:normal">${esc(r.title||"")}</td>
+        <td>${esc(String(r.score ?? "–"))}</td>
+        <td>${esc(String(r.year ?? "–"))}</td>
+        <td>${esc(String(r.rows ?? "–"))}</td>
+        <td>${esc(String(r.nItems ?? "–"))}</td>
+        <td>${esc(String(r.nMeas ?? "–"))}</td>
+        <td class="l">${r.ok?'<span class="vdi vd-good">채택</span>'
+          :'<span class="vdi vd-bad">탈락</span>'}
+          <span class="dimc"> ${esc(r.reason||"")}</span>
+          ${(r.sample||[]).length?`<br><span class="dimc" style="font-size:11px">실제 항목:
+            ${esc((r.sample||[]).join(" · "))}</span>`:""}</td>
+      </tr>`).join("")}</tbody></table></div>` : "";
+  if (!head && !tbl) return "";
+  return `<div style="margin:10px 0 14px">${head}${tbl}
+    <p class="pnote">진단 원본은 <code>data/pcb_intl_verify.json</code> 입니다.
+      '실제 항목'이 <code>config/pcb_intl.yaml</code> 의 <code>match</code> 와
+      다르면 그 문자열만 고치면 됩니다.</p></div>`;
+}
+
 function intlDecl(D){
   return `<div class="tscroll"><table class="wt"><thead><tr>
       <th class="l">축</th><th class="l">출처</th><th class="l">공표 시차</th>
