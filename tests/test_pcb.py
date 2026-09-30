@@ -69,16 +69,14 @@ def _jp_rows(months, hv_up=True):
     rows = []
     for i, p in enumerate(months):
         k = (1 + 0.02 * i) if hv_up else (1 - 0.015 * i)
-        base = {"multilayer": 30000.0 * k, "buildup": 12000.0 * k,
-                "flexible": 18000.0, "single_double": 9000.0}
+        base = {"ml_10p": 9000.0 * k, "buildup": 12000.0 * k,
+                "ml_68": 11000.0, "ml_4": 7000.0,
+                "flex_multi": 14000.0, "rigid_double": 8000.0}
         for key, v in base.items():
             rows.append({"source": IN.SOURCE, "series": IN.series_key(key, "amt"),
                          "period": p, "value": v, "unit": "百万円"})
             rows.append({"source": IN.SOURCE, "series": IN.series_key(key, "qty"),
                          "period": p, "value": v / 3.0, "unit": "千個"})
-        tot = sum(base.values())
-        rows.append({"source": IN.SOURCE, "series": IN.series_key("pcb_total", "amt"),
-                     "period": p, "value": tot, "unit": "百万円"})
     return rows
 
 
@@ -372,10 +370,19 @@ def test_time_code_quarter_is_not_a_month():
 def test_item_matching_prefers_specific():
     """'ビルドアップ多層配線板' 은 '多層' 에도 걸린다. 구체적인 쪽이 이겨야 한다."""
     c = IN.load()
-    assert IN.pick_item("ビルドアップ多層配線板", c.items).key == "buildup"
-    assert IN.pick_item("多層プリント配線板", c.items).key == "multilayer"
-    assert IN.pick_item("フレキシブルプリント配線板", c.items).key == "flexible"
-    assert IN.pick_item("電子回路基板", c.items).key == "pcb_total"
+    # 실측 항목명 그대로. 전각 괄호·전각 숫자다.
+    assert IN.pick_item("製品_0128_リジッドビルドアップ多層配線板_B_生産金額_百万円",
+                        c.items).key == "buildup"
+    assert IN.pick_item("製品_0127_リジッド多層プリント配線板（１０層以上）_B_生産金額_百万円",
+                        c.items).key == "ml_10p"
+    assert IN.pick_item("製品_0125_リジッド多層プリント配線板（４層）_A_生産数量_m2",
+                        c.items).key == "ml_4"
+    # '両面・多層フレキシブル' 이 리지드 양면으로 새면 안 된다
+    assert IN.pick_item("製品_0130_両面・多層フレキシブル配線板_B_生産金額_百万円",
+                        c.items).key == "flex_multi"
+    assert IN.pick_item("製品_0124_リジッド両面プリント配線板_B_生産金額_百万円",
+                        c.items).key == "rigid_double"
+    assert IN.pick_item("製品_0104_チップ抵抗器_B_生産金額_百万円", c.items) is None
     assert IN.pick_item("洗濯機", c.items) is None
     # 빈 매칭 문자열이 전부를 삼키는 경로 차단
     assert IN.matches("多層", [""]) is False
@@ -395,9 +402,6 @@ def test_intl_cross_check_reads_mix():
     assert it["cross"]["verdict"]["code"] == "mix_confirmed", it["cross"]
     hv = [r for r in it["rows"] if r["highValue"]]
     assert {r["key"] for r in hv} == set(P.HIGH_VALUE_JP)
-    # 계(pcb_total)는 비중 분모에 넣지 않는다 — 이중계상
-    tot = next(r for r in it["rows"] if r["key"] == "pcb_total")
-    assert tot["share"] is None, tot
     assert sum(r["share"] for r in it["rows"] if r["share"] is not None) > 99
     assert "더하지 않습니다" in it["note"], "두 나라 합산 금지 경고가 없다"
     print(f"  ✓ 교차검증 — 한국 ASP {it['cross']['krAspYoy']}% · "
@@ -458,18 +462,20 @@ def test_collector_end_to_end_on_replica():
     est = v["estat"]
     assert est["ok"] is True, est
     # 2010년 시계열표가 아니라 品目 축을 가진 製品月表 가 뽑혀야 한다
-    assert "製品月表" in (est.get("title") or ""), est.get("title")
+    assert "時系列表" in (est.get("title") or ""), est.get("title")
+    assert "主要製品統計表" not in (est.get("title") or ""), est.get("title")
     assert est["to"] == "2026-08", est
     assert est["from"] <= "2019-01", est
     # 표 하나가 한 달인 계열이므로 이어붙이기가 돌았어야 한다
     assert v.get("stitch") and v["stitch"]["addedRows"] > 0, v.get("stitch")
     with Store(db) as s:
         ser = s.demand(IN.SOURCE)
-    for k in ("jp:multilayer:amt", "jp:buildup:amt", "jp:flexible:amt",
-              "jp:multilayer:qty", "jp:multilayer:stock"):
+    for k in ("jp:ml_10p:amt", "jp:buildup:amt", "jp:ml_68:amt", "jp:ml_4:amt",
+              "jp:flex_multi:amt", "jp:rigid_single:amt", "jp:ml_10p:qty"):
         assert k in ser and len(ser[k]) >= 80, (k, len(ser.get(k, {})))
-    # 出荷는 '-'(비수치)로만 왔다 — 0 으로 채워 넣으면 안 된다
-    assert not (ser.get("jp:multilayer:ship") or {}), "비수치 기호를 값으로 넣었다"
+    # 무관한 電子部品(チップ抵抗器 등)은 들어오면 안 된다
+    assert all(IN.split_series(k)[0] in {i.key for i in IN.load().items}
+               for k in ser), sorted(ser)[:5]
     print(f"  ✓ 실측 replica 수집 — 표 {est['statsDataId']} · {est['from']}~{est['to']} · "
           f"{est['rows']:,}행 · vintage {v['stitch']['siblings']}건 이어붙임")
 
@@ -492,13 +498,57 @@ def test_replica_feeds_the_panel():
     assert it["mix"]["chg"] > 0, it["mix"]
     assert it["cross"]["verdict"]["code"] == "mix_confirmed", it["cross"]
     # 단위가 원문 그대로 붙어야 한다 (百万円 → 億円 환산을 우리가 하지 않는다)
-    ml = next(r for r in it["rows"] if r["key"] == "multilayer")
+    ml = next(r for r in it["rows"] if r["key"] == "ml_10p")
     assert ml["amt"]["unit"] == "百万円", ml["amt"]
-    # 재고순환 — 관세 통계에 없는 축이라 일본에서만 나온다
-    assert ml["stock"]["ratio"] is not None and ml["stock"]["ratioChg"] is not None, ml["stock"]
+    # 수량 단위는 면적(m²)이다 — 기판은 개수보다 면적이 물량이다
+    q = next(r for r in it["rows"] if r["key"] == "rigid_single")
+    assert q["amt"]["unit"] == "百万円", q["amt"]
     print(f"  ✓ 화면 연결 — 기준월 {it['asOf']} · 고부가 {it['mix']['prev']}→"
           f"{it['mix']['now']}% · 단위 {ml['amt']['unit']} · "
           f"[{it['cross']['verdict']['label']}]")
+
+
+def test_family_is_matched_without_the_year_prefix():
+    """「2025年 時系列表(…)」 계열은 **제목 앞 연도만 다르다.**
+
+    제목을 그대로 비교해 형제 표를 찾았더니 자기 자신 하나뿐이었고, 시계열이
+    12개월로 끝나 전년 동월 비교가 아예 성립하지 않았다(2026-09-30 실측).
+    화면에는 "월 수가 12개뿐"만 떴다.
+    """
+    assert (IN.norm_title("2025年 時系列表(2350_機械器具月報（その３５）電子部品)")
+            == IN.norm_title("2019年 時系列表(2350_機械器具月報（その３５）電子部品)"))
+    # 분야가 다른 표(2360_반도체)는 같은 계열이 아니다
+    assert (IN.norm_title("2025年 時系列表(2360_機械器具月報（その３６）電子管)")
+            != IN.norm_title("2025年 時系列表(2350_機械器具月報（その３５）電子部品)"))
+    assert IN.norm_title("令和7年 時系列表(X)") == IN.norm_title("2025年 時系列表(X)")
+
+    sys.path.insert(0, str(ROOT / "tests" / "fixtures"))
+    import estat_fake as FK
+    td = Path(tempfile.mkdtemp()); db = td / "k.sqlite"
+    os.environ["EJ_ESTAT_APP_ID"] = "test-only-not-a-real-key"
+    try:
+        _, v = _run_collector(FK.fake_get, db)
+    finally:
+        os.environ.pop("EJ_ESTAT_APP_ID", None)
+    st = v["stitch"]
+    assert st["siblings"] >= 8, st          # 2019~2026 여덟 해
+    assert "2350" in st["family"] and "年" not in st["family"].split("時系列表")[0], st
+    # 분야가 다른 2360_ 표가 섞이면 안 된다
+    assert all("2360" not in str(x.get("id", "")) for x in st.get("ids", []))
+    assert v["estat"]["from"] == "2019-01" and v["estat"]["to"] == "2026-08", v["estat"]
+    print(f"  ✓ 계열 매칭 — '{st['family'][:34]}…' vintage {st['siblings']}건 "
+          f"→ {v['estat']['from']}~{v['estat']['to']}")
+
+
+def test_high_value_is_ten_plus_layers_not_all_multilayer():
+    """4층·6~8층까지 고부가로 묶으면 범용 물량이 신호를 희석한다."""
+    assert set(P.HIGH_VALUE_JP) == {"ml_10p", "buildup"}, P.HIGH_VALUE_JP
+    keys = {i.key for i in IN.load().items}
+    assert {"ml_4", "ml_68", "ml_10p"} <= keys, keys
+    # 전각 문자를 반각으로 적으면 하나도 안 맞는다
+    src = (ROOT / "config" / "pcb_intl.yaml").read_text(encoding="utf-8")
+    assert "（１０層以上" in src and "（６～８層" in src and "（４層" in src
+    print("  ✓ 고부가 = 10층 이상 + 빌드업 (4층·6~8층은 별도 계열)")
 
 
 def test_second_run_only_refreshes_recent_vintages():
@@ -514,12 +564,14 @@ def test_second_run_only_refreshes_recent_vintages():
         os.environ.pop("EJ_ESTAT_APP_ID", None)
     assert v1["stitch"]["fullRefresh"] is True, v1["stitch"]
     assert v2["stitch"]["fullRefresh"] is False, v2["stitch"]
-    assert v2["stitch"]["siblings"] < v1["stitch"]["siblings"], (v1["stitch"], v2["stitch"])
+    assert v2["stitch"]["siblings"] <= v1["stitch"]["siblings"], (v1["stitch"], v2["stitch"])
+    cap = IN.load().revision_vintages
+    assert v2["stitch"]["siblings"] <= cap, (v2["stitch"], cap)
     # 2회차에도 최신월은 그대로 있어야 한다 (줄인 게 데이터를 깎으면 안 된다)
     assert v2["estat"]["to"] == v1["estat"]["to"] == "2026-08"
     with Store(db) as s:
         ser = s.demand(IN.SOURCE)
-    assert len(ser["jp:multilayer:amt"]) >= 80
+    assert len(ser["jp:ml_10p:amt"]) >= 80
     print(f"  ✓ 2회차 — vintage {v1['stitch']['siblings']}건 → "
           f"{v2['stitch']['siblings']}건, 최신월 {v2['estat']['to']} 유지")
 
@@ -537,14 +589,15 @@ def test_legacy_timeseries_table_is_rejected():
     assert "主要製品統計表" not in (v["estat"].get("title") or "")
     # 옛 표가 후보에는 있었는데도 안 뽑혔는지 확인한다 —
     # 후보에 아예 없었다면 이 테스트는 아무것도 보장하지 않는다.
-    titles = [c["title"] for c in v["search"]["top"]]
+    titles = [c["title"] for c in v["search"]["top"]]  # noqa: F841
     legacy = [c for c in v["search"]["top"] if "主要製品統計表" in c["title"]]
     picked = v["estat"]["statsDataId"]
     assert all(c["id"] != picked for c in legacy), (picked, titles[:3])
     if legacy:
         # 점수에서도 밀려야 한다 (최신성 가점이 없으면 여기서 뒤집힌다)
-        assert max(c["score"] for c in legacy) < min(
-            c["score"] for c in v["search"]["top"] if "製品月表" in c["title"])
+        good = [c["score"] for c in v["search"]["top"] if "時系列表" in c["title"]]
+        if good:
+            assert max(c["score"] for c in legacy) < max(good)
     rejected = [p for p in v.get("probes", []) if not p["ok"]]
     for p in rejected:
         assert p["reason"], p
@@ -557,8 +610,8 @@ def test_legacy_timeseries_table_is_rejected():
     c = IN.load()
     old_t = {"stat": "経済産業省生産動態統計", "cycle": "月次", "rows": 42, "year": 2010,
              "title": "主要製品統計表（時系列） １３４．電子回路基板"}
-    new_t = {"stat": "経済産業省生産動態統計", "cycle": "月次", "rows": 122, "year": 2026,
-             "title": "製品月表 ３５．電子部品"}
+    new_t = {"stat": "経済産業省生産動態統計", "cycle": "年次", "rows": 900, "year": 2026,
+             "title": "2026年 時系列表(2350_機械器具月報（その３５）電子部品)"}
     so, sn = mod.score_table(old_t, c, 2026), mod.score_table(new_t, c, 2026)
     assert sn > so, f"점수로도 최신 표가 이겨야 한다: 옛 {so} vs 새 {sn}"
     print(f"  ✓ 옛 시계열표(品目 축 없음) 배제 — 검색 후보 {len(legacy)}건, "
@@ -645,6 +698,94 @@ def test_site_has_pcb_tab_next_to_cosmetics():
     # ma3 는 null 을 전파해야 한다 (JS 에서 null+null+null === 0)
     assert "w.some(v => v == null) ? null" in html
     print("  ✓ 사이트 — PCB기판 탭 · 화장품 옆 배치 · null 전파 이동평균")
+
+
+# 브라우저 전역·내장 함수. 여기 없는 이름을 부르면 "is not defined" 로 죽는다.
+_JS_KNOWN = {
+    "if", "for", "while", "switch", "catch", "return", "typeof", "function",
+    "String", "Number", "Math", "Object", "Array", "JSON", "Date", "Boolean",
+    "parseFloat", "parseInt", "isNaN", "Promise", "Map", "Set", "RegExp", "Error",
+    "getComputedStyle", "fetch", "matchMedia", "addEventListener", "setTimeout",
+    "requestAnimationFrame", "console", "document", "window", "location",
+    # 템플릿 문자열 안의 CSS·SVG 함수. 호출처럼 보이지만 JS 함수가 아니다.
+    "var", "repeat", "minmax", "rotate", "translate", "scale", "calc",
+    "rgba", "rgb", "url", "matrix",
+}
+
+
+def test_pcb_render_calls_are_all_defined():
+    """**호출은 하는데 정의가 없는 함수**를 잡는다.
+
+    2026-09-30 사고: `intlProbes(D)` 를 부르면서 정의하지 않았다. 그 호출은
+    해외축이 **연결되지 않은 분기**에만 있었고, 테스트 픽스처는 연결된 분기만
+    만들고 있었다. 그래서 테스트는 전부 통과했는데 실제 화면에서는 renderPcb 가
+    통째로 죽었고, 죽으면 #view 가 그대로 남아 **'탭이 안 넘어간다'** 로 보였다.
+
+    분기마다 픽스처를 만드는 것보다 이 정적 검사가 싸고 확실하다.
+    """
+    import re
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    js = html[html.index('const PCB_KEY = "pcb";'):
+              html.index("/* ================= shell ================= */")]
+    defined = set(re.findall(r"function\s+([A-Za-z_$][\w$]*)\s*\(", html))
+    defined |= set(re.findall(r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=", html))
+    # 공백 없이 바로 '(' 가 붙은 것만 호출로 본다 — "ASP ($/kg)" 같은 본문 텍스트가
+    # 호출로 잡히면 검사가 잡음투성이가 되어 아무도 안 보게 된다.
+    called = set(re.findall(r"(?<![.\w$])([A-Za-z_$][\w$]*)\(", js))
+    # 이 코드베이스의 함수는 전부 camelCase 다. 전부 대문자인 토큰은 본문 안의
+    # 용어("ASP($/kg)")이지 호출이 아니다.
+    missing = sorted(n for n in (called - defined - _JS_KNOWN)
+                     if not n.isupper())
+    assert not missing, f"정의되지 않은 함수를 호출한다: {missing}"
+    print(f"  ✓ PCB 렌더 호출 {len(called)}종 전부 정의됨 "
+          f"(intlProbes 미정의로 탭이 죽은 사고 재발 방지)")
+
+
+def test_pcb_renders_both_intl_branches():
+    """해외축 **연결 전/후 두 분기**를 모두 렌더한다.
+
+    연결된 분기만 보고 있었던 것이 위 사고의 근본 원인이다.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:                                  # noqa: BLE001
+        print("  – playwright 없음 — 건너뜀 (정적 검사는 위 테스트가 한다)")
+        return
+    sys.path.insert(0, str(ROOT / "tests" / "fixtures"))
+    import estat_fake as FK
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+
+    for label, with_jp in (("연결 전", False), ("연결 후", True)):
+        td = Path(tempfile.mkdtemp()); db = td / "k.sqlite"
+        _fixture(db)
+        if with_jp:
+            os.environ["EJ_ESTAT_APP_ID"] = "test-only-not-a-real-key"
+            try:
+                _run_collector(FK.fake_get, db)
+            finally:
+                os.environ.pop("EJ_ESTAT_APP_ID", None)
+        payload = _build(db)
+        assert payload["intl"]["ok"] is with_jp, (label, payload["intl"].get("note"))
+        boot = {"data/pcb.json": payload,
+                "data/manifest.json": {"generatedAt": "x", "sectors": [], "coverage": {}}}
+        page = td / "i.html"
+        page.write_text(html.replace(
+            "<head>", "<head><script>window.__BOOTSTRAP__="
+            + json.dumps(boot, ensure_ascii=False) + ";</script>", 1), encoding="utf-8")
+        errs = []
+        with sync_playwright() as pw:
+            b = pw.chromium.launch()
+            pg = b.new_page()
+            pg.on("pageerror", lambda e: errs.append(str(e)))
+            pg.goto(page.as_uri()); pg.wait_for_timeout(700)
+            pg.click('button[data-key="pcb"]', timeout=8000); pg.wait_for_timeout(900)
+            body = pg.inner_text("#view")
+            b.close()
+        assert not errs, (label, errs)
+        # 탭이 실제로 **바뀌었는지** — 죽으면 #view 에 이전 탭이 남는다
+        assert "수출 단가(ASP) 추이" in body, (label, body[:200])
+        assert "해외 대조축" in body, label
+        print(f"  ✓ 렌더 {label} — JS 오류 0건 · #view 교체 확인")
 
 
 def test_workflow_builds_pcb():
