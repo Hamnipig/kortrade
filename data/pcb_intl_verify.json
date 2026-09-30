@@ -343,52 +343,52 @@
       "map": [
        {
         "code": "2350010450",
-        "item": "single_double",
+        "item": "rigid_single",
         "name": "製品_0123_リジッド片面プリント配線板_A_生産数量_m2"
        },
        {
         "code": "2350010460",
-        "item": "single_double",
+        "item": "rigid_single",
         "name": "製品_0123_リジッド片面プリント配線板_B_生産金額_百万円"
        },
        {
         "code": "2350010470",
-        "item": "single_double",
+        "item": "rigid_double",
         "name": "製品_0124_リジッド両面プリント配線板_A_生産数量_m2"
        },
        {
         "code": "2350010480",
-        "item": "single_double",
+        "item": "rigid_double",
         "name": "製品_0124_リジッド両面プリント配線板_B_生産金額_百万円"
        },
        {
         "code": "2350010490",
-        "item": "multilayer",
+        "item": "ml_4",
         "name": "製品_0125_リジッド多層プリント配線板（４層）_A_生産数量_m2"
        },
        {
         "code": "2350010500",
-        "item": "multilayer",
+        "item": "ml_4",
         "name": "製品_0125_リジッド多層プリント配線板（４層）_B_生産金額_百万円"
        },
        {
         "code": "2350010510",
-        "item": "multilayer",
+        "item": "ml_68",
         "name": "製品_0126_リジッド多層プリント配線板（６～８層）_A_生産数量_m2"
        },
        {
         "code": "2350010520",
-        "item": "multilayer",
+        "item": "ml_68",
         "name": "製品_0126_リジッド多層プリント配線板（６～８層）_B_生産金額_百万円"
        },
        {
         "code": "2350010530",
-        "item": "multilayer",
+        "item": "ml_10p",
         "name": "製品_0127_リジッド多層プリント配線板（１０層以上）_A_生産数量_m2"
        },
        {
         "code": "2350010540",
-        "item": "multilayer",
+        "item": "ml_10p",
         "name": "製品_0127_リジッド多層プリント配線板（１０層以上）_B_生産金額_百万円"
        },
        {
@@ -403,22 +403,22 @@
        },
        {
         "code": "2350010570",
-        "item": "flexible",
+        "item": "flex_single",
         "name": "製品_0129_片面フレキシブル配線板_A_生産数量_m2"
        },
        {
         "code": "2350010580",
-        "item": "flexible",
+        "item": "flex_single",
         "name": "製品_0129_片面フレキシブル配線板_B_生産金額_百万円"
        },
        {
         "code": "2350010590",
-        "item": "flexible",
+        "item": "flex_multi",
         "name": "製品_0130_両面・多層フレキシブル配線板_A_生産数量_m2"
        },
        {
         "code": "2350010600",
-        "item": "flexible",
+        "item": "flex_multi",
         "name": "製品_0130_両面・多層フレキシブル配線板_B_生産金額_百万円"
        }
       ]
@@ -461,7 +461,7 @@
    "rows": 876
   },
   "parsed": {
-   "kept": 96,
+   "kept": 192,
    "skipped": {
     "noPeriod": 0,
     "noItem": 684,
@@ -469,65 +469,180 @@
     "nan": 0
    },
    "bySeries": {
-    "jp:single_double:qty": 24,
-    "jp:single_double:amt": 24,
-    "jp:multilayer:qty": 36,
-    "jp:multilayer:amt": 36,
+    "jp:rigid_single:qty": 12,
+    "jp:rigid_single:amt": 12,
+    "jp:rigid_double:qty": 12,
+    "jp:rigid_double:amt": 12,
+    "jp:ml_4:qty": 12,
+    "jp:ml_4:amt": 12,
+    "jp:ml_68:qty": 12,
+    "jp:ml_68:amt": 12,
+    "jp:ml_10p:qty": 12,
+    "jp:ml_10p:amt": 12,
     "jp:buildup:qty": 12,
     "jp:buildup:amt": 12,
-    "jp:flexible:qty": 24,
-    "jp:flexible:amt": 24
+    "jp:flex_single:qty": 12,
+    "jp:flex_single:amt": 12,
+    "jp:flex_multi:qty": 12,
+    "jp:flex_multi:amt": 12
    },
-   "merged": {
-    "jp:single_double:qty": 12,
-    "jp:single_double:amt": 12,
-    "jp:multilayer:qty": 24,
-    "jp:multilayer:amt": 24,
-    "jp:flexible:qty": 12,
-    "jp:flexible:amt": 12
-   }
+   "merged": {}
   }
  },
  "stitch": {
-  "siblings": 1,
-  "pulled": 0,
-  "addedRows": 0,
+  "family": "時系列表(2350_機械器具月報（その３５）電子部品)",
+  "siblings": 5,
+  "pulled": 4,
+  "addedRows": 576,
   "fullRefresh": true,
-  "haveMonths": 0,
-  "calls": []
+  "haveMonths": 12,
+  "ids": [
+   {
+    "id": "0004061824",
+    "year": 2025,
+    "surveyDate": "202501-202512"
+   },
+   {
+    "id": "0004032941",
+    "year": 2024,
+    "surveyDate": "202401-202412"
+   },
+   {
+    "id": "0004019784",
+    "year": 2023,
+    "surveyDate": "202301-202312"
+   },
+   {
+    "id": "0004014438",
+    "year": 2022,
+    "surveyDate": "202201-202212"
+   },
+   {
+    "id": "0004001018",
+    "year": 2021,
+    "surveyDate": "202101-202112"
+   }
+  ],
+  "calls": [
+   {
+    "id": "0004032941",
+    "status": 0,
+    "http": 200,
+    "msg": "正常に終了しました。",
+    "values": 900,
+    "kept": 192,
+    "skipped": {
+     "noPeriod": 0,
+     "noItem": 708,
+     "noMeas": 0,
+     "nan": 0
+    }
+   },
+   {
+    "id": "0004019784",
+    "status": 0,
+    "http": 200,
+    "msg": "正常に終了しました。",
+    "values": 1725,
+    "kept": 192,
+    "skipped": {
+     "noPeriod": 825,
+     "noItem": 708,
+     "noMeas": 0,
+     "nan": 0
+    }
+   },
+   {
+    "id": "0004014438",
+    "status": 0,
+    "http": 200,
+    "msg": "正常に終了しました。",
+    "values": 1725,
+    "kept": 192,
+    "skipped": {
+     "noPeriod": 825,
+     "noItem": 708,
+     "noMeas": 0,
+     "nan": 0
+    }
+   },
+   {
+    "id": "0004001018",
+    "status": 0,
+    "http": 200,
+    "msg": "正常に終了しました。",
+    "values": 1978,
+    "kept": 0,
+    "skipped": {
+     "noPeriod": 1978,
+     "noItem": 0,
+     "noMeas": 0,
+     "nan": 0
+    }
+   }
+  ]
  },
  "estat": {
   "ok": true,
   "statsDataId": "0004061824",
   "title": "2025年 時系列表(2350_機械器具月報（その３５）電子部品)",
   "cycle": "年次",
-  "rows": 96,
-  "from": "2025-01",
+  "rows": 768,
+  "from": "2022-01",
   "to": "2025-12",
   "series": {
-   "jp:single_double:qty": 12,
-   "jp:single_double:amt": 12,
-   "jp:multilayer:qty": 12,
-   "jp:multilayer:amt": 12,
-   "jp:buildup:qty": 12,
-   "jp:buildup:amt": 12,
-   "jp:flexible:qty": 12,
-   "jp:flexible:amt": 12
+   "jp:rigid_single:qty": 48,
+   "jp:rigid_single:amt": 48,
+   "jp:rigid_double:qty": 48,
+   "jp:rigid_double:amt": 48,
+   "jp:ml_4:qty": 48,
+   "jp:ml_4:amt": 48,
+   "jp:ml_68:qty": 48,
+   "jp:ml_68:amt": 48,
+   "jp:ml_10p:qty": 48,
+   "jp:ml_10p:amt": 48,
+   "jp:buildup:qty": 48,
+   "jp:buildup:amt": 48,
+   "jp:flex_single:qty": 48,
+   "jp:flex_single:amt": 48,
+   "jp:flex_multi:qty": 48,
+   "jp:flex_multi:amt": 48
   },
-  "units": {},
+  "units": {
+   "jp:rigid_single:qty": "m2",
+   "jp:rigid_single:amt": "百万円",
+   "jp:rigid_double:qty": "m2",
+   "jp:rigid_double:amt": "百万円",
+   "jp:ml_4:qty": "m2",
+   "jp:ml_4:amt": "百万円",
+   "jp:ml_68:qty": "m2",
+   "jp:ml_68:amt": "百万円",
+   "jp:ml_10p:qty": "m2",
+   "jp:ml_10p:amt": "百万円",
+   "jp:buildup:qty": "m2",
+   "jp:buildup:amt": "百万円",
+   "jp:flex_single:qty": "m2",
+   "jp:flex_single:amt": "百万円",
+   "jp:flex_multi:qty": "m2",
+   "jp:flex_multi:amt": "百万円"
+  },
   "missing": [
-   "jp:pcb_total:amt",
-   "jp:pcb_total:qty",
-   "jp:pcb_total:stock",
-   "jp:pcb_total:ship",
-   "jp:multilayer:stock",
-   "jp:multilayer:ship",
+   "jp:ml_10p:stock",
+   "jp:ml_10p:ship",
    "jp:buildup:stock",
    "jp:buildup:ship",
-   "jp:flexible:stock",
-   "jp:flexible:ship",
-   "jp:single_double:stock",
-   "jp:single_double:ship"
+   "jp:ml_68:stock",
+   "jp:ml_68:ship",
+   "jp:ml_4:stock",
+   "jp:ml_4:ship",
+   "jp:flex_multi:stock",
+   "jp:flex_multi:ship",
+   "jp:flex_single:stock",
+   "jp:flex_single:ship",
+   "jp:rigid_double:stock",
+   "jp:rigid_double:ship",
+   "jp:rigid_single:stock",
+   "jp:rigid_single:ship"
   ]
  }
 }
