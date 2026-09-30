@@ -1224,6 +1224,7 @@ const BSCOL = {final:"--s1", component:"--s2", material:"--s3", equipment:"--s4"
 // 투자 판단이 정반대다. 색으로 먼저 갈라 준다.
 const DVCLS = {share_loss:"vd-bad", demand_down:"vd-bad", onshoring:"vd-loc",
                demand_ok_partial:"vd-na", level_only:"vd-na",
+               localizing:"vd-loc", share_down_unknown:"vd-mix",
                expanding:"vd-good", share_gain:"vd-good", mixed:"vd-mix",
                partial:"vd-na", unknown:"vd-na"};
 const BACL = {x:[-60,120], y:[-70,70]};   // 극단값은 가장자리로 밀고 점선으로 표시만 바꾼다
@@ -1416,7 +1417,10 @@ function renderDemand(host, D){
       <p class="pnote">한국 수출만 보면 <b>'현지화'와 '점유율 상실'이 똑같이 보입니다.</b>
         둘 다 수출을 줄이지만 판단은 정반대입니다. 미국 <b>수입</b>이 시장 규모와 우리 몫을,
         미국 <b>설치용량</b>이 최종 수요를 말해 줍니다.
-        <b>미국 수입이 느는데 한국 비중이 빠지면 현지화가 아니라 경쟁 패배입니다.</b></p>
+        <b>다만 한국 비중이 빠졌다고 곧 경쟁 패배는 아닙니다</b> — 미국 수입의 한국 비중은
+        <b>선적 원산지 비중</b>이지 기업 점유율이 아닙니다. 한국 기업이 미국에서 만들면
+        그 물량은 수입에 <b>아예 잡히지 않습니다.</b> 그래서 현지화지수를 두 번째 조건으로
+        함께 보고, 원산지 분해로 누가 그 자리를 가져갔는지 확인합니다.</p>
       <div class="legend">
         <span class="lg"><span class="sw" style="background:var(--s1)"></span>한국 수출(달러)</span>
         <span class="lg"><span class="sw" style="background:var(--s2)"></span>미국 수입(달러)</span>
@@ -1436,6 +1440,31 @@ function renderDemand(host, D){
         <td class="${y>0?'up':(y<0?'down':'')}">${y==null?"–":pct(y)}</td>
         <td class="l"><span class="tk" style="display:inline">${src}</span></td></tr>`).join("")}
       </tbody></table></div>
+      ${(D.origins && D.origins.length) ? `
+        <div class="phead" style="margin-top:18px"><h3 class="ptitle">미국 BESS 수입 원산지</h3>
+          <span class="unit">최근 ${D.window}개월 · 그 자리를 누가 가져갔나</span></div>
+        <p class="pnote"><b>한국 비중이 빠졌을 때 어디가 올랐는지가 해석을 가릅니다.</b>
+          중국이면 경쟁 패배 쪽, <b>폴란드·헝가리면 한국 기업의 유럽 기지</b>일 수 있어
+          해석이 완전히 달라집니다. 미국 현지 생산분은 여기 어디에도 안 잡힙니다.</p>
+        <div class="tscroll"><table class="wt"><thead><tr>
+          <th class="l">원산지</th><th>$M</th><th>비중</th><th>전년 비중</th>
+          <th>비중 변화</th><th>YoY</th></tr></thead><tbody>
+        ${D.origins.map(o=>`<tr${o.isKR?' style="background:var(--surface-2)"':''}>
+          <td class="l"><span class="${o.isKR?'it':''}">${esc(o.name||o.cty)}</span>
+            ${o.isKR?' <span class="pu high">한국</span>':''}</td>
+          <td>${o.usd==null?"–":fm(o.usd)}</td>
+          <td>${o.share==null?"–":o.share+"%"}</td>
+          <td class="dimc">${o.sharePrev==null?"–":o.sharePrev+"%"}</td>
+          <td class="${o.shareChg>0?'up':(o.shareChg<0?'down':'')}">${
+            o.shareChg==null?"–":(o.shareChg>0?"+":"")+o.shareChg+"%p"}</td>
+          <td class="${o.yoy>0?'up':'down'}">${o.yoy==null?"–":pct(o.yoy)}</td></tr>`).join("")}
+        </tbody></table></div>` : ""}
+      ${(D.loc && D.loc.now!=null) ? `
+        <p class="pnote" style="margin-top:12px"><b>대미 현지화지수</b> —
+          ${D.loc.prev==null?"":esc(String(D.loc.prev))+" → "}<b>${esc(String(D.loc.now))}</b>
+          <span class="tk" style="display:inline">(${esc(D.loc.note||"")})</span>.
+          이 지수가 <b>오르면</b> 완제품이 줄어도 부품·소재는 계속 나간다는 뜻이라
+          경쟁 패배가 아니라 <b>조립이 미국으로 옮겨간 것</b>입니다.</p>` : ""}
       ${(D.axes && Object.values(D.axes).some(a=>!a.ok))
         ? `<div class="warn" style="margin-top:12px"><b>비어 있는 축</b> —
             ${Object.entries(D.axes).filter(([,a])=>!a.ok).map(([k,a])=>
@@ -1459,7 +1488,11 @@ function renderDemand(host, D){
         <br>④ <b>한국 수출과 미국 수입은 같은 물건이 아닙니다.</b> 한국 8507603000 은 셀·팩,
         미국 ${esc(D.picked||"")} 는 ${esc(im.desc||"외함 수납 시스템")} 입니다.
         수준이 아니라 <b>방향</b>만 대조하십시오.
-        <br>⑤ 기업별 현지 출하량은 통관에도 EIA 에도 없습니다. 최종 확인은
+        <br>⑤ <b>한국 비중은 기업 점유율이 아닙니다.</b> 선적 원산지 기준이라
+        한국 기업의 <b>미국 현지 생산분은 여기 어디에도 안 잡힙니다.</b> 비중 하락은
+        (a) 경쟁 패배 (b) 미국 현지화 (c) 폴란드·헝가리 등 제3국 기지 재배치 중
+        무엇이든 만들 수 있습니다 — 현지화지수와 원산지 분해를 함께 보십시오.
+        <br>⑥ 기업별 현지 출하량은 통관에도 EIA 에도 없습니다. 최종 확인은
         DART·SEC EDGAR 공시입니다 — 분기 단위라 이 화면과 주기가 다릅니다.</div>
     </section>`;
   const mount = document.getElementById("bdemchart");
