@@ -153,8 +153,13 @@ def test_lag_found_on_differences_not_levels():
     assert abs(got["fit"]["beta"] - 1.6) < 0.2, got["fit"]["beta"]
     assert got["identified"] is True, "톱니 입력이면 시차가 식별돼야 한다"
 
+    # best_lag 는 공용 자리(stats)로 옮겼다 — PCB 레이어도 같은 회귀를 쓴다.
+    # 레이어가 레이어를 import 하면 안 되므로 구현은 stats.py 에 있어야 한다.
+    stats_src = (ROOT / "kortrade" / "stats.py").read_text(encoding="utf-8")
+    assert "_diff(" in stats_src and "차분" in stats_src, "시차를 차분으로 찾지 않는다"
     src = (ROOT / "kortrade" / "battery.py").read_text(encoding="utf-8")
-    assert "_diff(" in src and "차분" in src, "시차를 차분으로 찾지 않는다"
+    assert "best_lag" in src and "from .stats import" in src, \
+        "battery 가 공용 stats 에서 best_lag 를 가져오지 않는다"
     # 리튬 원단위를 상수로 박아두지 않았는지
     assert "0.44" not in src and "원단위" in src, \
         "리튬 원단위를 상수로 가정하면 그 가정이 결과를 만든다"
