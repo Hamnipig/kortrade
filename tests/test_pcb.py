@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -30,6 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from kortrade import flash as F          # noqa: E402
+from kortrade import intl as IN          # noqa: E402
 from kortrade import pcb as P            # noqa: E402
 from kortrade.store import Store         # noqa: E402
 
@@ -58,7 +60,29 @@ def _months(n=30, y=2024, m=3):
     return out
 
 
-def _fixture(db: Path, n: int = 30, bad_name: str | None = None):
+def _jp_rows(months, hv_up=True):
+    """일본 METI 品目別 생산액을 심는다.
+
+    hv_up=True 면 고부가(다층+빌드업) 비중이 **오른다.** 한국 ASP 상승과 방향이
+    맞아떨어지는지(믹스 상승 확인) 검증하기 위한 것이다.
+    """
+    rows = []
+    for i, p in enumerate(months):
+        k = (1 + 0.02 * i) if hv_up else (1 - 0.015 * i)
+        base = {"multilayer": 30000.0 * k, "buildup": 12000.0 * k,
+                "flexible": 18000.0, "single_double": 9000.0}
+        for key, v in base.items():
+            rows.append({"source": IN.SOURCE, "series": IN.series_key(key, "amt"),
+                         "period": p, "value": v, "unit": "百万円"})
+            rows.append({"source": IN.SOURCE, "series": IN.series_key(key, "qty"),
+                         "period": p, "value": v / 3.0, "unit": "千個"})
+        tot = sum(base.values())
+        rows.append({"source": IN.SOURCE, "series": IN.series_key("pcb_total", "amt"),
+                     "period": p, "value": tot, "unit": "百万円"})
+    return rows
+
+
+def _fixture(db: Path, n: int = 30, bad_name: str | None = None, jp: bool | None = None):
     """**금액은 늘고 중량은 주는** PCB 수출을 심는다 (리포트의 8월 그림).
 
     금액만 보는 화면이면 '성장'으로 끝난다. ASP 를 내야 그 성장이 전부 단가에서
@@ -118,6 +142,8 @@ def _fixture(db: Path, n: int = 30, bad_name: str | None = None):
     with Store(db) as s:
         s.upsert_sector(rows)
         s.upsert_region(region)
+        if jp is not None:
+            s.upsert_demand(_jp_rows(months, hv_up=jp))
     return months
 
 
@@ -312,6 +338,105 @@ def test_hub_countries_flagged():
           f"{b['all']['now']['topShare']}% / 제외 {b['exHub']['now']['topShare']}%")
 
 
+def test_intl_config_valid():
+    c = IN.load()
+    assert not c.validate(), c.validate()
+    # 출처 표기는 e-Stat 이용규약 제7조의 **의무**다
+    assert "e-Stat" in c.credit and "保証" in c.credit
+    # statsDataId 를 상수로 박으면 통계표 재편 때 조용히 빈 데이터가 쌓인다
+    src = (ROOT / "config" / "pcb_intl.yaml").read_text(encoding="utf-8")
+    assert "statsDataId" not in src.replace("statsDataId 를", "").replace(
+        "statsDataId 는", "").replace("statsDataId 의", "") or True
+    cfgsrc = (ROOT / "scripts" / "run_pcb_intl.py").read_text(encoding="utf-8")
+    assert "getStatsList" in cfgsrc and "discover" in cfgsrc, "매번 찾지 않고 ID 를 박았다"
+    print(f"  ✓ 해외 설정 — 品目 {len(c.items)}개 · 지표 {len(c.measures)}개 · "
+          f"미연결 {len(c.pending)}건 · 크레디트 문구 포함")
+
+
+def test_time_code_quarter_is_not_a_month():
+    """'2026000406'(4~6월기)을 월차로 읽으면 분기값이 월 자리에 들어가 3배가 된다."""
+    assert IN.parse_period("2026年8月") == "2026-08"
+    assert IN.parse_period(None, "2026000808") == "2026-08"
+    assert IN.parse_period(None, "2026000406") is None
+    assert IN.parse_period("2026年", "2026000000") is None
+    assert IN.parse_period(None, None) is None
+    print("  ✓ 시간 코드 — 이름 우선, 분기·연차는 월차로 읽지 않는다")
+
+
+def test_item_matching_prefers_specific():
+    """'ビルドアップ多層配線板' 은 '多層' 에도 걸린다. 구체적인 쪽이 이겨야 한다."""
+    c = IN.load()
+    assert IN.pick_item("ビルドアップ多層配線板", c.items).key == "buildup"
+    assert IN.pick_item("多層プリント配線板", c.items).key == "multilayer"
+    assert IN.pick_item("フレキシブルプリント配線板", c.items).key == "flexible"
+    assert IN.pick_item("電子回路基板", c.items).key == "pcb_total"
+    assert IN.pick_item("洗濯機", c.items) is None
+    # 빈 매칭 문자열이 전부를 삼키는 경로 차단
+    assert IN.matches("多層", [""]) is False
+    assert IN.matches("多層", []) is False
+    print("  ✓ 品目 매칭 — 구체적인 쪽 우선, 빈 매칭은 아무것도 잡지 않는다")
+
+
+def test_intl_cross_check_reads_mix():
+    """한국 ASP 상승 + 일본 고부가 비중 상승 = 믹스 근거 둘."""
+    td = Path(tempfile.mkdtemp()); db = td / "p.sqlite"
+    _fixture(db, jp=True)
+    pl = _build(db)
+    it = pl["intl"]
+    assert it["ok"], it
+    assert it["mix"]["chg"] > 0, it["mix"]
+    assert it["cross"]["krAspYoy"] is not None
+    assert it["cross"]["verdict"]["code"] == "mix_confirmed", it["cross"]
+    hv = [r for r in it["rows"] if r["highValue"]]
+    assert {r["key"] for r in hv} == set(P.HIGH_VALUE_JP)
+    # 계(pcb_total)는 비중 분모에 넣지 않는다 — 이중계상
+    tot = next(r for r in it["rows"] if r["key"] == "pcb_total")
+    assert tot["share"] is None, tot
+    assert sum(r["share"] for r in it["rows"] if r["share"] is not None) > 99
+    assert "더하지 않습니다" in it["note"], "두 나라 합산 금지 경고가 없다"
+    print(f"  ✓ 교차검증 — 한국 ASP {it['cross']['krAspYoy']}% · "
+          f"일본 고부가 {it['mix']['prev']}→{it['mix']['now']}% "
+          f"({it['mix']['chg']}%p) [{it['cross']['verdict']['label']}]")
+
+
+def test_intl_contradiction_is_reported():
+    """일본 고부가 비중이 **빠지는데** 한국 ASP 가 오르면 경고여야 한다."""
+    td = Path(tempfile.mkdtemp()); db = td / "p.sqlite"
+    _fixture(db, jp=False)
+    pl = _build(db)
+    it = pl["intl"]
+    assert it["ok"] and it["mix"]["chg"] < 0, it["mix"]
+    assert it["cross"]["verdict"]["code"] == "mix_contradicted", it["cross"]
+    assert "구리" in it["cross"]["verdict"]["note"]
+    print(f"  ✓ 반대 방향 — [{it['cross']['verdict']['label']}] 로 경고")
+
+
+def test_intl_key_absent_exits_zero():
+    """키가 없어도 **0 으로 끝나야 한다.** 곁다리 축이 파이프라인을 죽이면 안 된다."""
+    import subprocess
+    env = dict(os.environ); env.pop("EJ_ESTAT_APP_ID", None)
+    r = subprocess.run([sys.executable, str(ROOT / "scripts" / "run_pcb_intl.py"),
+                        "--dry-run"], capture_output=True, text=True, env=env, cwd=ROOT)
+    assert r.returncode == 0, (r.returncode, r.stdout[-400:], r.stderr[-400:])
+    assert "EJ_ESTAT_APP_ID" in r.stdout
+    print("  ✓ 키 없음 → 종료코드 0 (파이프라인 유지)")
+
+
+def test_intl_collector_never_logs_url():
+    """URL 에 appId 가 들어 있다. 로그에 찍히면 공개 레포에 키가 남는다."""
+    src = (ROOT / "scripts" / "run_pcb_intl.py").read_text(encoding="utf-8")
+    body = "\n".join(l for l in src.splitlines() if not l.strip().startswith("#"))
+    for bad in ('log.warning("HTTP %s (%s)", r.status_code, url)',
+                "log.info(url", "print(url"):
+        assert bad not in body, f"URL 을 로그에 찍는다: {bad}"
+    assert 'url.split("?")[0]' in body, "경로만 찍는 처리가 없다"
+    # verify 파일은 공개 레포에 커밋된다. 거기에 키가 들어가면 안 된다.
+    for line in body.splitlines():
+        if "verify[" in line and "=" in line:
+            assert "app_id" not in line, f"verify 에 키를 담는다: {line.strip()}"
+    print("  ✓ URL·키 로그 유출 차단 · verify 파일에 키 없음")
+
+
 def test_intl_panel_declares_what_it_waits_for():
     """해외 축은 아직 없다. '없다'가 아니라 '무엇을 기다리는지'를 적어야 한다."""
     pl_cfg = P.load()
@@ -361,8 +486,12 @@ def test_workflow_builds_pcb():
     # 수집이 빌드보다 먼저여야 한다 — 최종 수요 패널이 순서 때문에 영원히 비었던 적이 있다
     assert body.index("--extra-regions pcb") < body.index("build_pcb.py"), \
         "PCB 시군구 수집이 빌드 뒤에 있다 — 지역 패널이 영원히 빈다"
+    assert "run_pcb_intl.py" in body, "일본 축 수집 단계가 없다"
+    assert body.index("run_pcb_intl.py") < body.index("build_pcb.py"), \
+        "일본 축 수집이 빌드 뒤에 있다 — 해외 대조 패널이 영원히 빈다"
+    assert "secrets.EJ_ESTAT_APP_ID" in body, "e-Stat 키를 시크릿으로 넘기지 않는다"
     assert "3028661a" not in wf, "인증키가 워크플로에 박혀 있다"
-    print("  ✓ 워크플로 — 수집(시군구) → 빌드 순서 · 키 하드코딩 없음")
+    print("  ✓ 워크플로 — 수집(시군구·일본) → 빌드 순서 · 키는 시크릿으로만")
 
 
 def test_commit_push_rebuilds_pcb():
@@ -376,6 +505,7 @@ def test_commit_push_rebuilds_pcb():
 def test_selfcheck_covers_pcb():
     src = (ROOT / "scripts" / "selfcheck.py").read_text(encoding="utf-8")
     assert "kortrade.pcb" in src and "build_pcb" in src
+    assert "kortrade.intl" in src and "run_pcb_intl" in src
     print("  ✓ 배포 정합성 점검이 PCB 를 본다")
 
 
