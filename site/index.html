@@ -2288,11 +2288,11 @@ function intlDecl(D){
   return `<div class="tscroll"><table class="wt"><thead><tr>
       <th class="l">축</th><th class="l">출처</th><th class="l">공표 시차</th>
       <th class="l">필요한 키</th><th class="l">왜 필요한가</th></tr></thead><tbody>
-      ${(D.intl.items||[]).map(i=>`<tr class="itemrow">
+      ${(D.intl.items||[]).filter(i=>!i.connected).map(i=>`<tr class="itemrow">
         <td class="l">${esc(i.name)}</td>
         <td class="l dimc">${esc(i.who)}</td>
         <td class="l hsk">${esc(i.lag||"–")}</td>
-        <td class="l">${i.have?'<span class="pu high">보유</span>':
+        <td class="l">${i.have?'<span class="pu high">키 보유</span>':
           (i.needKey?`<span class="hsk">${esc(i.needKey)}</span>`:
             '<span class="pu">키 불필요</span>')}</td>
         <td class="l dimc" style="max-width:420px;white-space:normal">${mdb(i.why)}</td>
@@ -2313,6 +2313,9 @@ function renderPcb(){
   const nOk = D.verify.filter(r=>r.counted).length;
   const nBad = D.verify.filter(r=>!r.counted && r.status!=="draft").length;
   const cty = (D.countries||[]).map(c=>({...c, kind:"cty", why:c.hubWhy}));
+  // 통계표마다 주는 지표가 다르다 — 在庫가 없는 표면 그 열은 통째로 '–' 가 된다.
+  // 죽은 열을 남겨 두면 "재고가 0"으로 읽힌다.
+  const hasStock = (D.intl?.rows||[]).some(r=>r.stock?.ratio!=null);
   const codePts = (D.items||[]).filter(r=>r.counted && r.group==="board")
     .map(r=>({...r, kind:"code", name:r.label, hub:false}));
 
@@ -2482,16 +2485,24 @@ function renderPcb(){
 
       ${D.intl.ok ? `
       <section class="panel p12">
-        <div class="phead"><h2 class="ptitle">해외 대조축 — 일본 품목별 생산</h2>
-          <span class="unit">METI 생산동태통계 · 기준월 ${esc(D.intl.asOf)}</span></div>
+        <div class="phead"><h2 class="ptitle">해외 대조축 — 일본 품목별 생산
+            <span class="pu high">연결됨</span></h2>
+          <span class="unit">METI 생산동태통계 · 일본 기준월 ${esc(D.intl.asOf)}${
+            D.intl.cross.lagMonths ? ` · 한국보다 ${D.intl.cross.lagMonths}개월 뒤` : ""}</span></div>
+        ${D.intl.cross.lagMonths ? `<p class="warn">일본 「時系列表」는 <b>연 1회 공표</b>라
+          최신이 ${esc(D.intl.asOf)}입니다 — 한국(${esc(D.intl.cross.krAsOf||"")})보다
+          <b>${D.intl.cross.lagMonths}개월 뒤</b>입니다. 그래서 교차 판정은 두 축을
+          <b>같은 기간(${esc(D.intl.cross.window||"")})</b>으로 맞춰 계산했습니다.</p>` : ""}
         <p class="pnote">한국 ASP 가 올랐을 때 그게 <b>고다층·패키지기판으로의 믹스 전환</b>인지
           <b>구리값·환율</b>인지는 한국 데이터만으로 못 가릅니다 — HS 8534 에 층수 구분이
           없기 때문입니다. 일본은 品目別로 쪼개 주므로 고부가 비중의 방향을 따로 볼 수
           있습니다. ${mdb(D.intl.note)}</p>
-        <p class="pnote"><b>재고/생산</b>은 일본이 덤으로 주는 축입니다. 관세 통계에는
+        ${hasStock?`<p class="pnote"><b>재고/생산</b>은 일본이 덤으로 주는 축입니다. 관세 통계에는
           재고 개념 자체가 없어서, 대만 MOEA 를 붙이기 전까지 <b>재고순환을 볼 수 있는
           유일한 창</b>입니다. 이 비율이 생산보다 먼저 튀면 다음 분기 수출이 꺾입니다
-          (비율 상승은 <span style="color:var(--crit)">빨강</span>으로 표시합니다).</p>
+          (비율 상승은 <span style="color:var(--crit)">빨강</span>으로 표시합니다).</p>`
+          :`<p class="pnote">이 통계표는 <b>生産만</b> 주고 在庫는 주지 않아 재고순환 열을
+            숨겼습니다. 재고는 대만 MOEA 축을 붙이면 채워집니다.</p>`}
         <div class="sig">
           <div class="sigcard"><h4>${esc(D.intl.mix.label)}</h4>
             <div class="sub">최근 ${D.recent}개월 · 생산금액 기준</div><ol>
@@ -2500,20 +2511,22 @@ function renderPcb(){
             <li><span class="nm">전년</span>
               <span class="vl">${D.intl.mix.prev==null?"–":D.intl.mix.prev+"%"}</span></li>
           </ol></div>
-          <div class="sigcard"><h4>한국 ASP</h4>
-            <div class="sub">최근 ${D.recent}개월 YoY</div><ol>
+          <div class="sigcard"><h4>한국 ASP <span class="pu">같은 기간</span></h4>
+            <div class="sub">${esc(D.intl.cross.window||"")} YoY</div><ol>
             <li><span class="nm">단가</span>
               <span class="vl ${D.intl.cross.krAspYoy>0?"up":"down"}">${
                 pct(D.intl.cross.krAspYoy)}</span></li>
-            <li><span class="nm">물량</span>
-              <span class="vl ${hr.qtyYoy>0?"up":"down"}">${pct(hr.qtyYoy)}</span></li>
+            <li><span class="nm">한국 최신(${esc(D.asOf)})</span>
+              <span class="vl ${D.intl.cross.krAspYoyLatest>0?"up":"down"}">${
+                pct(D.intl.cross.krAspYoyLatest)}</span></li>
           </ol></div>
           <div class="sigcard"><h4>교차 판정</h4>
             <div class="sub">두 축의 방향</div><ol>
             <li><span class="nm">${pvb(D.intl.cross.verdict)}</span></li>
           </ol></div>
         </div>
-        <p class="pnote" style="margin-top:10px">${mdb(D.intl.cross.verdict.note)}</p>
+        <p class="pnote" style="margin-top:10px">${mdb(D.intl.cross.verdict.note)}
+          ${mdb(D.intl.cross.note||"")}</p>
         <div class="legend" style="margin-top:12px">
           <span class="lg"><span class="sw" style="background:var(--s2)"></span>고부가 비중(%)</span>
         </div>
@@ -2521,7 +2534,7 @@ function renderPcb(){
         <div class="tscroll" style="margin-top:12px"><table class="wt"><thead><tr>
           <th class="l">품목</th><th>최신월</th><th>금액 YoY</th><th>최근 ${D.recent}M</th>
           <th>수량 YoY</th><th>비중</th><th>비중 변화</th>
-          <th>재고/생산</th><th>재고비율 변화</th>
+          ${hasStock?`<th>재고/생산</th><th>재고비율 변화</th>`:""}
           <th class="l">왜 보는가</th></tr></thead><tbody>
           ${(D.intl.rows||[]).map(r=>`<tr class="itemrow${r.seen?"":" dim"}">
             <td class="l">${esc(r.label)}${r.highValue?' <span class="pu high">고부가</span>':""}</td>
@@ -2530,10 +2543,10 @@ function renderPcb(){
             <td class="${r.amt.recentYoy>0?"up":"down"}">${pct(r.amt.recentYoy)}</td>
             <td>${pct(r.qty.recentYoy)}</td>
             <td>${r.share==null?"–":r.share+"%"}</td>
-            <td class="${r.shareChg>0?"up":"down"}">${pp(r.shareChg)}</td>
-            <td>${r.stock?.ratio==null?"–":r.stock.ratio.toFixed(2)}</td>
-            <td class="${r.stock?.ratioChg>0?"down":"up"}">${
-              r.stock?.ratioChg==null?"–":(r.stock.ratioChg>0?"+":"")+r.stock.ratioChg.toFixed(2)}</td>
+            <td class="${!r.shareChg?"":(r.shareChg>0?"up":"down")}">${pp(r.shareChg)}</td>
+            ${hasStock?`<td>${r.stock?.ratio==null?"–":r.stock.ratio.toFixed(2)}</td>
+            <td class="${!r.stock?.ratioChg?"":(r.stock.ratioChg>0?"down":"up")}">${
+              r.stock?.ratioChg==null?"–":(r.stock.ratioChg>0?"+":"")+r.stock.ratioChg.toFixed(2)}</td>`:""}
             <td class="l dimc" style="max-width:360px;white-space:normal">${
               r.seen?mdb(r.why):"응답에 이 품목이 없습니다 — data/pcb_intl_verify.json 의 meta.classes 확인"}</td>
           </tr>`).join("")}</tbody></table></div>
