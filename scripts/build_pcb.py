@@ -215,14 +215,31 @@ def build_intl(cfg: P.PcbConfig, store: Store | None = None,
         except Exception:                                # noqa: BLE001
             verify = {}
     ev = verify.get("estat") or {}
+    # 진단을 화면까지 끌어올린다. 2026-09-30 에 "데이터가 없습니다" 한 줄만 떠서
+    # 왜 비었는지(키 문제인지, 표 선택 문제인지)를 레포의 JSON 을 열어야 알았다.
+    # 그 한 줄이 화면에 있었으면 한 바퀴를 아꼈다.
+    diag = {"note": ev.get("note"), "probes": [
+        {"id": d.get("id"), "title": d.get("title"), "year": d.get("year"),
+         "rows": d.get("rows"), "score": d.get("score"), "ok": d.get("ok"),
+         "reason": d.get("reason"), "nItems": d.get("nItems"),
+         "nMeas": d.get("nMeas"), "last": d.get("last"),
+         "classes": [f"{c.get('id')}({c.get('n')})"
+                     for c in ((d.get("meta") or {}).get("classes") or [])],
+         "sample": [nm for c in ((d.get("meta") or {}).get("classes") or [])
+                    if c.get("id") != "time" for nm in (c.get("sample") or [])][:8]}
+        for d in (verify.get("probes") or [])]}
+    tried = verify.get("search", {}).get("tried") or []
+    diag["searched"] = len(tried)
+    diag["candidates"] = verify.get("search", {}).get("found")
+    diag["apiOk"] = bool(tried) and all(t.get("status") == 0 for t in tried)
 
     ser = store.demand(IN.SOURCE)
     if not ser:
-        off["note"] = ("일본 축(METI/e-Stat)은 키가 등록됐는지와 무관하게 아직 "
-                       "데이터가 없습니다. scripts/run_pcb_intl.py 가 한 번도 "
-                       "성공하지 못했을 수 있습니다 — data/pcb_intl_verify.json 을 "
-                       "보십시오.")
-        off["diag"] = ev
+        off["note"] = ("일본 축(METI/e-Stat)에 아직 데이터가 없습니다. "
+                       + ("키와 API 호출은 정상입니다 — 통계표 선택 문제입니다. "
+                          if diag["apiOk"] else "")
+                       + f"원인: {ev.get('note') or 'data/pcb_intl_verify.json 확인'}")
+        off["diag"] = diag
         return off
 
     # 일본 축은 **자기 달력을 쓴다.** 한국 관세청과 공표 시차가 달라서 억지로
@@ -231,7 +248,7 @@ def build_intl(cfg: P.PcbConfig, store: Store | None = None,
     if len(months) < 13:
         off["note"] = (f"일본 축 월 수가 {len(months)}개뿐이라 전년 동월 비교를 "
                        f"만들 수 없습니다.")
-        off["diag"] = ev
+        off["diag"] = diag
         return off
     latest = months[-1]
     cur3 = months[-cfg.recent:]
@@ -246,10 +263,22 @@ def build_intl(cfg: P.PcbConfig, store: Store | None = None,
         n, o = win(key, a), win(key, b)
         return None if (n is None or not o) else round((n / o - 1) * 100, 1)
 
+    # 단위는 **DB 에서** 읽는다. verify 파일에서만 읽으면 그 파일이 없거나 낡은
+    # 실행에서 단위가 통째로 빈다 — 값은 있는데 단위만 사라지는 화면이 된다.
+    # 百万円↔億円 환산은 하지 않는다. 우리가 환산하면 그 환산이 숫자를 만든다.
+    units: dict = {}
+    try:
+        uf = store.frame(
+            "SELECT series, unit FROM demand_series"
+            " WHERE source = ? AND unit IS NOT NULL AND unit <> ''"
+            " GROUP BY series", (IN.SOURCE,))
+        if not uf.empty:
+            units = {str(r.series): str(r.unit) for r in uf.itertuples()}
+    except Exception:                                    # noqa: BLE001
+        units = {}
+
     def unit_of(key):
-        # 단위는 응답이 준 문자열을 그대로 쓴다. 百万円↔億円 환산을 우리가
-        # 가정하면 그 가정이 숫자를 만든다.
-        return (ev.get("units") or {}).get(key, "")
+        return units.get(key) or (ev.get("units") or {}).get(key, "")
 
     amt_tot = {p: 0.0 for p in months}
     for i in ic.items:
@@ -281,6 +310,21 @@ def build_intl(cfg: P.PcbConfig, store: Store | None = None,
     mix_chg = (None if (mix_now is None or mix_prev is None)
                else round(mix_now - mix_prev, 1))
 
+    def _stock(item_key):
+        ks, ka_ = IN.series_key(item_key, "stock"), IN.series_key(item_key, "amt")
+        n, p_ = win(ks, cur3), win(ks, prev3)
+        prod = win(ka_, cur3)
+        prod_p = win(ka_, prev3)
+        # 재고/생산 비율. 절대 재고액보다 **비율의 방향**이 신호다 —
+        # 생산이 같이 늘면 재고가 늘어도 정상이다.
+        r_now = (None if not prod or n is None else round(n / prod, 2))
+        r_prev = (None if not prod_p or p_ is None else round(p_ / prod_p, 2))
+        return {"now": _r(n, 1), "unit": unit_of(ks),
+                "yoy": yoy(ks, cur3, prev3),
+                "ratio": r_now, "ratioPrev": r_prev,
+                "ratioChg": (None if (r_now is None or r_prev is None)
+                             else round(r_now - r_prev, 2))}
+
     rows = []
     for i in ic.items:
         ka, kq = IN.series_key(i.key, "amt"), IN.series_key(i.key, "qty")
@@ -303,6 +347,9 @@ def build_intl(cfg: P.PcbConfig, store: Store | None = None,
                     "m": [_r(sa.get(p), 1) for p in months]},
             "qty": {"yoy": yoy(kq, [latest], [F.shift(latest, -12)]),
                     "recentYoy": yoy(kq, cur3, prev3)},
+            # 재고순환 — 대만 MOEA 를 붙이기 전까지 **재고를 볼 수 있는 유일한 축**이다.
+            # 재고가 생산보다 먼저 튀면 다음 분기 수출이 꺾인다.
+            "stock": _stock(i.key),
             "share": share_now, "sharePrev": share_prev,
             "shareChg": (None if (share_now is None or share_prev is None)
                          else round(share_now - share_prev, 1)),
