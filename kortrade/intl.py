@@ -51,6 +51,9 @@ class Measure:
     key: str
     label: str
     match: list[str] = field(default_factory=list)
+    # ★ 生産·出荷·在庫 가 **한 축에 같이 들어 있다.** '金額' 하나로 맞추면
+    #   생산금액 자리에 재고금액이 섞여 YoY 가 통째로 다른 이야기가 된다.
+    exclude: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -76,6 +79,13 @@ class IntlConfig:
     measures: list[Measure] = field(default_factory=list)
     items: list[Item] = field(default_factory=list)
     start: str = "2019-01"
+    probe_top: int = 8
+    # 「製品月表」 처럼 **표 하나가 한 달**인 계열은 vintage 를 이어붙여야
+    # 시계열이 된다. 한 표가 이만큼의 월을 이미 갖고 있으면 시계열표로 보고
+    # 이어붙이지 않는다.
+    max_tables: int = 120
+    min_months_single: int = 24
+    revision_vintages: int = 15
     credit: str = ""
     pending: list[Pending] = field(default_factory=list)
 
@@ -109,6 +119,15 @@ class IntlConfig:
                 errs.append(f"measure '{m.key}' 에 match 가 없다")
         if not parse_period(self.start + "-01") and not re.fullmatch(r"\d{4}-\d{2}", self.start):
             errs.append(f"start '{self.start}' 는 YYYY-MM 이어야 한다")
+        if not (1 <= self.max_tables <= 400):
+            errs.append(f"max_tables {self.max_tables} — 1~400 이어야 한다")
+        if not (1 <= self.revision_vintages <= 120):
+            errs.append(f"revision_vintages {self.revision_vintages} — 1~120 이어야 한다")
+        if not (2 <= self.min_months_single <= 240):
+            errs.append(f"min_months_single {self.min_months_single} — 2~240 이어야 한다")
+        if not (1 <= self.probe_top <= 20):
+            errs.append(f"probe_top {self.probe_top} — 1~20 이어야 한다 "
+                        "(후보마다 getMetaInfo 호출이 한 번씩 나간다)")
         if "e-Stat" not in self.credit:
             errs.append("credit 문구가 없다 — 이용규약 제7조가 출처 표시를 의무로 둔다")
         return errs
@@ -134,12 +153,17 @@ def load(path: Path | None = None) -> IntlConfig:
         title_bonus=_list(es.get("title_bonus")),
         cycle_prefer=_list(es.get("cycle_prefer")),
         measures=[Measure(key=str(d.get("key", "")), label=str(d.get("label", "")),
-                          match=_list(d.get("match"))) for d in (es.get("measures") or [])],
+                          match=_list(d.get("match")), exclude=_list(d.get("exclude")))
+                  for d in (es.get("measures") or [])],
         items=[Item(key=str(d.get("key", "")), label=str(d.get("label", "")),
                     match=_list(d.get("match")), exclude=_list(d.get("exclude")),
                     why=" ".join(str(d.get("why", "")).split()))
                for d in (es.get("items") or [])],
         start=str(es.get("start", "2019-01")),
+        probe_top=int(es.get("probe_top", 8)),
+        max_tables=int(es.get("max_tables", 120)),
+        min_months_single=int(es.get("min_months_single", 24)),
+        revision_vintages=int(es.get("revision_vintages", 15)),
         credit=" ".join(str(es.get("credit", "")).split()),
         pending=[Pending(key=str(d.get("key", "")), name=str(d.get("name", "")),
                          who=str(d.get("who", "")), need_key=d.get("need_key"),
@@ -154,19 +178,37 @@ def load(path: Path | None = None) -> IntlConfig:
 _KANJI_YM = re.compile(r"(\d{4})\s*年\s*(\d{1,2})\s*月")
 _CODE_YM = re.compile(r"^(\d{4})\d{2}(\d{2})(\d{2})$")
 
+# 和暦. e-Stat 의 오래된 통계표는 시간 항목 이름이 '平成19年11月' 로 온다
+# (2026-09-30 실측: 「主要製品統計表（時系列）１３４．電子回路基板」의 time 클래스
+#  이름이 '年月(H19～H25)', 항목이 '平成19年'·'平成20年11月' 이었다).
+# 西暦만 읽으면 그 표는 통째로 '기간 없음'이 되어, 왜 비었는지도 알 수 없다.
+_ERA_BASE = {"令和": 2018, "平成": 1988, "昭和": 1925, "R": 2018, "H": 1988, "S": 1925}
+_ERA_YM = re.compile(r"(令和|平成|昭和|[RHS])\s*(元|\d{1,2})\s*年\s*(\d{1,2})\s*月")
+
 
 def parse_period(name: str | None, code: str | None = None) -> str | None:
     """e-Stat 시간 항목 → 'YYYY-MM'. 월차가 아니면 None.
 
-    이름('2026年8月')을 먼저 본다. 코드 체계는 개정되지만 이름은 남는다.
-    코드로 떨어질 때는 시작월 == 종료월인 것만 받는다 — '2026000406'(4~6월기)을
-    월차로 읽으면 분기값이 월값 자리에 들어가 전부 3배로 보인다.
+    이름('2026年8月' 또는 '平成20年11月')을 먼저 본다. 코드 체계는 개정되지만
+    이름은 남는다. 코드로 떨어질 때는 **시작월 == 종료월**인 것만 받는다 —
+    '2026000406'(4~6월기)을 월차로 읽으면 분기값이 월 자리에 들어가 전부 3배가 된다.
+
+    '平成19年度'(연度)처럼 月이 없는 항목은 매칭되지 않는다. 연차·연도값이 월값
+    자리에 섞이는 것이 이 함수가 막아야 할 가장 큰 사고다.
     """
     if name:
-        m = _KANJI_YM.search(str(name))
+        t = str(name)
+        m = _KANJI_YM.search(t)
         if m:
             y, mo = int(m.group(1)), int(m.group(2))
             if 1 <= mo <= 12:
+                return f"{y:04d}-{mo:02d}"
+        m = _ERA_YM.search(t)
+        if m:
+            era, yr, mo = m.group(1), m.group(2), int(m.group(3))
+            n = 1 if yr == "元" else int(yr)
+            y = _ERA_BASE[era] + n
+            if 1 <= mo <= 12 and 1900 <= y <= 2100:
                 return f"{y:04d}-{mo:02d}"
     if code:
         m = _CODE_YM.match(str(code).strip())
@@ -175,6 +217,21 @@ def parse_period(name: str | None, code: str | None = None) -> str | None:
             if a == b and 1 <= a <= 12:
                 return f"{y:04d}-{a:02d}"
     return None
+
+
+def survey_year(survey_date) -> int | None:
+    """TABLE_INF.SURVEY_DATE('201001' · '201001-201012' · 0) 에서 연도만.
+
+    통계표 후보를 **최신성**으로 거르기 위한 것이다. 2026-09-30 실측에서
+    searchWord='電子回路基板' 이 돌려준 47건이 전부 surveyDate 2010xx 의
+    옛 표였고, 점수에 최신성이 없어 그중 하나가 1위로 올라갔다.
+    """
+    t = str(survey_date or "").strip()
+    m = re.match(r"^(\d{4})", t)
+    if not m:
+        return None
+    y = int(m.group(1))
+    return y if 1900 <= y <= 2100 else None
 
 
 def matches(name: str, want: list[str], avoid: list[str] | None = None) -> bool:
@@ -210,6 +267,42 @@ def pick_item(name: str, items: list[Item]) -> Item | None:
         if n > best_len:
             best, best_len = it, n
     return best
+
+
+def pick_measure(name: str, measures: list[Measure]) -> Measure | None:
+    """表章項目 하나를 고른다. pick_item 과 같은 규칙 — 구체적인 쪽이 이긴다.
+
+    '生産　金額(百万円)' 은 amt 의 '生産　金額' 과 잔여 '金額' 양쪽에 걸린다.
+    긴 매칭이 이기게 하고, exclude 로 出荷·在庫를 떼어낸다. 순서대로 first-match
+    를 쓰면 설정에 적은 차례가 결과를 만든다 — 그건 근거가 아니다.
+    """
+    best, best_len = None, -1
+    for m in measures:
+        if any(a for a in m.exclude if a and a in name):
+            continue
+        hits = [w for w in m.match if w and w in name]
+        if not hits:
+            continue
+        n = max(len(w) for w in hits)
+        if n > best_len:
+            best, best_len = m, n
+    return best
+
+
+_UNIT_IN_NAME = re.compile(r"[（(]([^）)]+)[）)]\s*$")
+
+
+def unit_from_name(name: str | None) -> str:
+    """'生産　金額(百万円)' → '百万円'.
+
+    실측상 단위가 CLASS 의 @unit 이 아니라 **항목 이름 괄호 안에** 들어 있다.
+    百万円→億円 환산을 우리가 하지 않는 이유는 그 환산이 숫자를 만들기 때문이다.
+    원문 단위를 그대로 들고 화면에도 원문으로 싣는다.
+    """
+    if not name:
+        return ""
+    m = _UNIT_IN_NAME.search(str(name).strip())
+    return m.group(1) if m else ""
 
 
 def series_key(item_key: str, measure_key: str) -> str:
