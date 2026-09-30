@@ -186,6 +186,27 @@ jobs:
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
         run: python scripts/run_demand.py --start 2021-01
 
+      # PCB 해외 대조축 — 일본 METI 생산동태통계(e-Stat API).
+      #
+      # 왜: 한국 ASP 가 올랐을 때 그게 고다층·패키지기판으로의 **믹스 전환**인지
+      #   **구리값·환율**인지를 한국 데이터만으로는 가를 수 없다. HS 8534 에 층수
+      #   구분이 없기 때문이다. 일본은 品目別(片面/両面/多層/ビルドアップ/フレキ)
+      #   생산액을 주므로 고부가 비중의 방향을 따로 볼 수 있다.
+      #
+      # 키는 **무료**다. 없으면 이 단계는 조용히 건너뛰고 0 으로 끝난다 —
+      # 곁다리 축이라 여기서 죽으면 안 된다.
+      #   EJ_ESTAT_APP_ID  https://www.e-stat.go.jp/mypage/user/preregister
+      #                    → 로그인 후 「API機能(アプリケーションID発行)」
+      #
+      # ★ build_pcb.py **앞**에 와야 한다. 최종 수요 축이 수집보다 빌드가 먼저
+      #   도는 바람에 패널이 영원히 비었던 적이 있다(2026-09-29).
+      - name: 수집 — PCB 해외 대조축 (일본 METI)
+        timeout-minutes: 10
+        continue-on-error: true
+        env:
+          EJ_ESTAT_APP_ID: ${{ secrets.EJ_ESTAT_APP_ID }}
+        run: python scripts/run_pcb_intl.py
+
       - name: 사이트 데이터 생성
         run: |
           python scripts/build_site.py
