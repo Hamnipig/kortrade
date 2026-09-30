@@ -234,6 +234,42 @@ def survey_year(survey_date) -> int | None:
     return y if 1900 <= y <= 2100 else None
 
 
+_YEAR_PREFIX = re.compile(r"^\s*(?:\d{4}|令和\s*(?:元|\d{1,2})|平成\s*(?:元|\d{1,2}))\s*年度?\s*")
+_UNIT_TAIL = re.compile(r"[（(]([^）)]+)[）)]\s*$")
+# 일본 통계표는 이름 끝에 단위를 '_百万円' 처럼 붙이기도 한다(실측: '…_生産金額_百万円').
+_UNIT_TOKENS = {"百万円", "千円", "億円", "円", "千個", "個", "台", "m2", "㎡", "千m2",
+                "t", "kg", "トン", "kL", "千kWh", "kW", "本", "枚", "千枚", "組"}
+
+
+def norm_title(title: str | None) -> str:
+    """통계표 제목에서 **연도 접두사를 떼어** 계열(family)을 식별한다.
+
+    ★ 실측 사고(2026-09-30): 「2025年 時系列表(2350_機械器具月報（その３５）電子部品)」
+      이 채택됐는데, 같은 계열의 2024·2023… 표는 제목 앞의 연도만 다르다.
+      제목을 **그대로** 비교해 형제 표를 찾았더니 자기 자신 하나뿐이었고,
+      그래서 시계열이 12개월로 끝나 전년 동월 비교가 아예 성립하지 않았다.
+      화면에는 "월 수가 12개뿐"만 떴다.
+    """
+    t = " ".join(str(title or "").split())
+    return _YEAR_PREFIX.sub("", t)
+
+
+def unit_from_name(name: str | None) -> str:
+    """'生産　金額(百万円)' → '百万円' · '…_生産金額_百万円' → '百万円'.
+
+    단위가 CLASS 의 @unit 으로 오지 않는 표가 있다(실측: units 가 통째로 비었다).
+    百万円→億円 환산은 하지 않는다 — 우리가 환산하면 그 환산이 숫자를 만든다.
+    """
+    t = str(name or "").strip()
+    if not t:
+        return ""
+    m = _UNIT_TAIL.search(t)
+    if m:
+        return m.group(1)
+    tail = t.rsplit("_", 1)[-1].strip()
+    return tail if tail in _UNIT_TOKENS else ""
+
+
 def matches(name: str, want: list[str], avoid: list[str] | None = None) -> bool:
     """이름 매칭. **빈 want 는 절대 통과시키지 않는다.**
 
@@ -287,22 +323,6 @@ def pick_measure(name: str, measures: list[Measure]) -> Measure | None:
         if n > best_len:
             best, best_len = m, n
     return best
-
-
-_UNIT_IN_NAME = re.compile(r"[（(]([^）)]+)[）)]\s*$")
-
-
-def unit_from_name(name: str | None) -> str:
-    """'生産　金額(百万円)' → '百万円'.
-
-    실측상 단위가 CLASS 의 @unit 이 아니라 **항목 이름 괄호 안에** 들어 있다.
-    百万円→億円 환산을 우리가 하지 않는 이유는 그 환산이 숫자를 만들기 때문이다.
-    원문 단위를 그대로 들고 화면에도 원문으로 싣는다.
-    """
-    if not name:
-        return ""
-    m = _UNIT_IN_NAME.search(str(name).strip())
-    return m.group(1) if m else ""
 
 
 def series_key(item_key: str, measure_key: str) -> str:
