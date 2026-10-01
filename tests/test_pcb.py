@@ -781,10 +781,20 @@ def test_pcb_render_calls_are_all_defined():
     """
     import re
     html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
-    js = html[html.index('const PCB_KEY = "pcb";'):
-              html.index("/* ================= shell ================= */")]
+    # ★ 2차전지 탭 렌더 블록도 같이 본다. 같은 사고(호출만 하고 정의 없음)가
+    #   어느 탭에서 나든 그 탭이 통째로 죽는다.
+    js = (html[html.index("function renderBatteryCharts("):
+               html.index('const PCB_KEY = "pcb";')]
+          + html[html.index('const PCB_KEY = "pcb";'):
+                 html.index("/* ================= shell ================= */")])
     defined = set(re.findall(r"function\s+([A-Za-z_$][\w$]*)\s*\(", html))
     defined |= set(re.findall(r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=", html))
+    # 함수 **매개변수**도 정의다. sigCard(.., fmt) 처럼 콜백을 인자로 받는 함수가
+    # 스캔 범위에 들어오면 그 인자가 '미정의 호출'로 잡힌다.
+    for args in re.findall(r"function\s+[A-Za-z_$][\w$]*\s*\(([^)]*)\)", html):
+        defined |= {a.split("=")[0].strip() for a in args.split(",") if a.strip()}
+    for args in re.findall(r"\(([^()]*)\)\s*=>", html):
+        defined |= {a.split("=")[0].strip() for a in args.split(",") if a.strip()}
     # 공백 없이 바로 '(' 가 붙은 것만 호출로 본다 — "ASP ($/kg)" 같은 본문 텍스트가
     # 호출로 잡히면 검사가 잡음투성이가 되어 아무도 안 보게 된다.
     called = set(re.findall(r"(?<![.\w$])([A-Za-z_$][\w$]*)\(", js))
@@ -793,7 +803,7 @@ def test_pcb_render_calls_are_all_defined():
     missing = sorted(n for n in (called - defined - _JS_KNOWN)
                      if not n.isupper())
     assert not missing, f"정의되지 않은 함수를 호출한다: {missing}"
-    print(f"  ✓ PCB 렌더 호출 {len(called)}종 전부 정의됨 "
+    print(f"  ✓ PCB·2차전지 렌더 호출 {len(called)}종 전부 정의됨 "
           f"(intlProbes 미정의로 탭이 죽은 사고 재발 방지)")
 
 

@@ -131,6 +131,57 @@ def test_cost_price_overlap_is_rejected():
     print("  ✓ 원가·판가 코드 중복 차단 (스프레드 부호 역전 방지)")
 
 
+def _build(db):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "bb", ROOT / "scripts" / "build_battery.py")
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    with Store(db) as st:
+        return mod.build(st, B.load())
+
+
+def test_items_carry_price_quantity_decomposition():
+    """금액만 보면 '밀어내기'와 '프리미엄 확산'이 같은 칸에 들어간다.
+
+    중량(expWgt)은 품목별 국가별 API 가 처음부터 같이 주고 있었고 DB 에도 있다 —
+    **추가 수집 0콜**인데 2026-10-01 까지 battery 레이어가 한 번도 쓰지 않았다.
+    (iM증권 이차전지 월간이 모든 품목에 '수출중량 및 ASP' 를 싣는 바로 그 축)
+    """
+    td = Path(tempfile.mkdtemp()); db = td / "b.sqlite"
+    _fixture(db)
+    pl = _build(db)
+    keys = ("wgt", "qtyYoy", "priceYoy", "asp", "priceShare", "pq", "aspM")
+    n = 0
+    for s in pl["stages"]:
+        for k in ("qtyYoy", "priceYoy", "asp", "priceShare", "pq", "aspM"):
+            assert k in s, (s["stage"], k)
+        for i in s["items"]:
+            for k in keys:
+                assert k in i, (i["code"], k)
+            if i["asp"] is not None:
+                n += 1
+                assert i["pq"]["code"] in (
+                    "premium_expansion", "volume_growth", "push", "price_led", "flat",
+                    "price_erosion", "mix_up", "volume_decline", "contracting", "unknown")
+                # ASP 시계열이 금액/중량과 어긋나지 않는지 (한 달 샘플 검산)
+                assert len(i["aspM"]) == len(pl["months"])
+    assert n >= 4, f"ASP 가 계산된 품목이 {n}개뿐"
+    for k in ("qtyYoy", "priceYoy", "asp", "priceShare", "pq"):
+        assert k in pl["total"], k
+    assert pl["minWgtKg"] and pl["flatPct"]
+    print(f"  ✓ P/Q 분해 — 품목 {n}개에 중량·ASP·국면 (추가 수집 0콜) · "
+          f"체인 ASP ${pl['total']['asp']}/kg 단가기여 {pl['total']['priceShare']}%")
+
+
+def test_stage_asp_is_a_mix_of_items():
+    """단계 합계 ASP 는 품목 믹스에 흔들린다 — 단독 해석 금지를 화면에 적는다."""
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    assert "단계 합계의 ASP" in html and "단독으로 읽지 마십시오" in html
+    # 장비는 대당 단가라 $/kg 국면이 의미 없다 — 지도에서 빠져야 한다
+    assert 'r.stage!=="equipment"' in html, "장비를 단가 국면 지도에서 빼지 않았다"
+    print("  ✓ 단계 ASP 믹스 경고 · 장비는 $/kg 국면에서 제외")
+
+
 def test_lag_found_on_differences_not_levels():
     """시차는 **차분**으로 찾아야 한다.
 
