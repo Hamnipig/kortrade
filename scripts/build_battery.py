@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from kortrade import battery as B
 from kortrade import demand as DM
 from kortrade import flash as F
+from kortrade import pq as PQ
 from kortrade import watchlist as W
 from kortrade.store import Store
 
@@ -391,6 +392,14 @@ def build(store: Store, cfg: B.BatteryConfig) -> dict | None:
             i3, i3p = agg(nat, [c.code], q3, "eu"), agg(nat, [c.code], q3p, "eu")
             iy, ir = W.pct(iu, ip, W.MIN_BASE_USD), W.pct(i3, i3p, W.MIN_BASE_USD)
             g = nat[nat["hs_code"] == c.code].groupby("period")["eu"].sum()
+            gw = nat[nat["hs_code"] == c.code].groupby("period")["ew"].sum()
+            # ★ P/Q 분해. 중량은 **이미 DB 에 있다** — 품목별 국가별 API 가 expWgt 를
+            #   같이 주고 우리는 처음부터 받고 있었다. 추가 수집 0콜.
+            #   금액만 보면 '밀어내기'와 '프리미엄 확산'이 같은 칸에 들어간다.
+            d = PQ.decompose(iu, ip, agg(nat, [c.code], cur, "ew"),
+                             agg(nat, [c.code], prev, "ew"))
+            d3 = PQ.decompose(i3, i3p, agg(nat, [c.code], q3, "ew"),
+                              agg(nat, [c.code], q3p, "ew"))
             items.append({
                 "code": c.code, "label": c.label, "purity": c.purity,
                 "evidence": c.evidence,
@@ -398,20 +407,44 @@ def build(store: Store, cfg: B.BatteryConfig) -> dict | None:
                 "accel": None if (iy is None or ir is None) else _r(ir - iy, 1),
                 "verdict": B.verdict(iy, ir),
                 "m": [_r(float(g.get(p, 0.0)) / M, 1) for p in months],
+                # 수출중량(톤)·ASP($/kg)·단가 국면
+                "wgt": _r(d["wgt"] / 1000.0, 1) if d["wgt"] else None,
+                "qtyYoy": d["qtyYoy"], "priceYoy": d["priceYoy"],
+                "asp": d["asp"], "aspPrev": d["aspPrev"],
+                "priceShare": d["priceShare"], "qtyShare": d["qtyShare"],
+                "pq": d["verdict"],
+                "recentQtyYoy": d3["qtyYoy"], "recentPriceYoy": d3["priceYoy"],
+                "wgtM": [_r(float(gw.get(p, 0.0)) / 1000.0, 1) for p in months],
+                "aspM": [_r(PQ.asp(float(g.get(p, 0.0)), float(gw.get(p, 0.0))))
+                         for p in months],
             })
+        sd = PQ.decompose(n8, p8, agg(nat, cs, cur, "ew"), agg(nat, cs, prev, "ew"))
+        gw_s = nat[nat["hs_code"].isin(cs)].groupby("period")["ew"].sum()
+        g_s = nat[nat["hs_code"].isin(cs)].groupby("period")["eu"].sum()
         stages.append({
             "stage": st, "usd": _m(n8), "yoy": yoy, "recentYoy": r3,
             "accel": None if (yoy is None or r3 is None) else _r(r3 - yoy, 1),
             "verdict": B.verdict(yoy, r3), "items": items,
+            # 단계 합계의 P/Q. 단계 안에서 품목 믹스가 바뀌어도 ASP 는 움직이므로
+            # 품목별과 같이 읽어야 한다 — 단계 ASP 단독 해석은 금물.
+            "qtyYoy": sd["qtyYoy"], "priceYoy": sd["priceYoy"], "asp": sd["asp"],
+            "priceShare": sd["priceShare"], "pq": sd["verdict"],
+            "aspM": [_r(PQ.asp(float(g_s.get(p, 0.0)), float(gw_s.get(p, 0.0))))
+                     for p in months],
             "m": [_r(float(nat[nat["hs_code"].isin(cs) & (nat["period"] == p)]["eu"].sum()) / M, 1)
                   for p in months],
         })
 
     t_yoy = W.pct(tot_now, tot_prev, W.MIN_BASE_USD)
     t_r3 = W.pct(tot_q3, tot_q3p, W.MIN_BASE_USD)
+    dem_cs = [c for st in B.DEMAND_STAGES for c in cfg.stage_codes(st, True)]
+    t_pq = PQ.decompose(tot_now, tot_prev,
+                        agg(nat, dem_cs, cur, "ew"), agg(nat, dem_cs, prev, "ew"))
     total = {"usd": _m(tot_now), "yoy": t_yoy, "recentYoy": t_r3,
              "accel": None if (t_yoy is None or t_r3 is None) else _r(t_r3 - t_yoy, 1),
-             "verdict": B.verdict(t_yoy, t_r3)}
+             "verdict": B.verdict(t_yoy, t_r3),
+             "qtyYoy": t_pq["qtyYoy"], "priceYoy": t_pq["priceYoy"],
+             "asp": t_pq["asp"], "priceShare": t_pq["priceShare"], "pq": t_pq["verdict"]}
 
     # ── 3. 선후행 — 지금 사이클을 끌고 있는 단계는 어디인가 ───────────────
     def stage_series(st):
@@ -525,6 +558,7 @@ def build(store: Store, cfg: B.BatteryConfig) -> dict | None:
 
     return {
         "demand": dem,
+        "minWgtKg": PQ.MIN_WGT_KG, "flatPct": PQ.FLAT_PCT,
         "version": cfg.version,
         "builtAt": datetime.now(KST).strftime("%Y-%m-%d %H:%M KST"),
         "asOf": latest, "months": months,
@@ -570,6 +604,9 @@ def main() -> int:
         for i in s["items"]:
             print(f"     {i['label']:<18} ${str(i['usd']):>8}M {str(i['yoy']):>7}% → "
                   f"{str(i['recentYoy']):>7}%  [{i['verdict']['label']}]")
+            print(f"       └ 중량 {str(i['wgt']):>9}t {str(i['qtyYoy']):>7}% · "
+                  f"ASP ${str(i['asp']):>8}/kg {str(i['priceYoy']):>7}% "
+                  f"(단가기여 {i['priceShare']}%)  [{i['pq']['label']}]")
     sp = payload["spread"]
     if sp["linked"]:
         print(f"  마진 프록시 — P ${sp['pNow']}/kg vs {sp['costLabel']} ${sp['cNow']}/kg, "
