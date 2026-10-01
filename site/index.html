@@ -1563,6 +1563,60 @@ function renderBatteryCharts(B){
       </div>` : ""}
     </section>
     <div id="bdem"></div>
+    <section class="panel p6">
+      <div class="phead"><h2 class="ptitle">품목별 단가(ASP) 추이</h2>
+        <span class="unit">$/kg · 3개월 이동평균</span></div>
+      <p class="pnote">같은 "+10%"라도 <b>물량이 늘어서</b>인지 <b>단가가 올라서</b>인지에 따라
+        투자 판단이 갈립니다. 양극재는 판가가 리튬에 연동되므로 ASP 하락이 곧 수요 감소는
+        아닙니다 — 원가(아래 마진 프록시)와 같이 보십시오. 범례를 눌러 계열을 켜고 끕니다.
+        <b>중량은 이미 받고 있던 데이터</b>라 추가 수집은 없습니다.</p>
+      <div class="legend" id="lg-basp"></div>
+      <div id="basp"></div>
+    </section>
+    <section class="panel p6">
+      <div class="phead"><h2 class="ptitle">단가 국면 지도</h2>
+        <span class="unit">버블 = 최근 ${B.window}개월 규모</span></div>
+      <p class="pnote"><b>오른쪽 아래가 밀어내기</b>입니다 — 물량은 늘었는데 단가가 빠진 자리.
+        다음 분기 마진과 재고로 돌아옵니다. 왼쪽 위는 저가 물량을 정리하며 믹스를 올리는
+        국면입니다. ±${B.flatPct}% 안쪽은 보합으로 봅니다.</p>
+      <div id="bquad"></div>
+    </section>
+    <section class="panel p12">
+      <div class="phead"><h2 class="ptitle">품목별 금액·중량·단가 분해</h2>
+        <span class="unit">최근 ${B.window}개월 · 중량 ${
+          B.minWgtKg ? B.minWgtKg.toLocaleString() : "1,000"}kg 미만은 단가를 내지 않음</span></div>
+      <div class="tscroll"><table class="wt"><thead><tr>
+        <th class="l">단계 · 품목</th><th>금액</th><th>금액 YoY</th>
+        <th>중량(t)</th><th>물량 YoY</th><th>ASP</th><th>ASP YoY</th>
+        <th>단가 기여</th><th class="l">국면</th></tr></thead><tbody>
+        ${(B.stages||[]).flatMap(s=>[
+          `<tr><td class="l"><span class="sw" style="display:inline-block;background:var(${
+            BSCOL[s.stage]||"--s5"});margin-right:6px"></span><b>${
+            esc(BSTAGE[s.stage]||s.stage)}</b></td>
+           <td>$${fm(s.usd)}M</td>
+           <td class="${!s.yoy?"":(s.yoy>0?"up":"down")}">${pct(s.yoy)}</td>
+           <td>–</td>
+           <td class="${!s.qtyYoy?"":(s.qtyYoy>0?"up":"down")}">${pct(s.qtyYoy)}</td>
+           <td>${s.asp==null?"–":"$"+s.asp.toLocaleString()}</td>
+           <td class="${!s.priceYoy?"":(s.priceYoy>0?"up":"down")}">${pct(s.priceYoy)}</td>
+           <td>${s.priceShare==null?"–":s.priceShare+"%"}</td>
+           <td class="l">${pvb(s.pq)}</td></tr>`
+          ].concat((s.items||[]).map(i=>
+          `<tr class="dim"><td class="l" style="padding-left:22px">${esc(i.label)}
+             <span class="pu${i.purity==="high"?" high":""}">${esc(i.purity||"")}</span></td>
+           <td>$${fm(i.usd)}M</td>
+           <td class="${!i.yoy?"":(i.yoy>0?"up":"down")}">${pct(i.yoy)}</td>
+           <td>${i.wgt==null?"–":fm(i.wgt)}</td>
+           <td class="${!i.qtyYoy?"":(i.qtyYoy>0?"up":"down")}">${pct(i.qtyYoy)}</td>
+           <td>${i.asp==null?"–":"$"+i.asp.toLocaleString()}</td>
+           <td class="${!i.priceYoy?"":(i.priceYoy>0?"up":"down")}">${pct(i.priceYoy)}</td>
+           <td>${i.priceShare==null?"–":i.priceShare+"%"}</td>
+           <td class="l">${pvb(i.pq)}</td></tr>`))).join("")}
+      </tbody></table></div>
+      <p class="pnote" style="margin-top:10px"><b>단계 합계의 ASP 는 단독으로 읽지 마십시오.</b>
+        단계 안에서 품목 믹스가 바뀌기만 해도 움직입니다 — 품목별 줄과 같이 보셔야 합니다.
+        장비는 대당 단가라 $/kg 가 의미를 갖지 않습니다.</p>
+    </section>
     <section class="panel p12">
       <div class="phead"><h2 class="ptitle">단계별 월별 추이</h2>
         <span class="unit">백만 USD · 3개월 이동평균</span></div>
@@ -1574,6 +1628,39 @@ function renderBatteryCharts(B){
 
   drawAccelMap(document.getElementById("bmap"), B);
   renderDemand(document.getElementById("bdem"), B.demand);
+
+  /* 품목별 ASP — 리포트가 모든 품목에 싣는 '수출중량 및 ASP' 에 해당한다.
+     ★ 레벨이 자릿수로 갈린다(셀 ~$30/kg vs 양극재 ~$25/kg vs 전해액). 그래도
+       같은 축에 둔다 — 레벨 비교가 아니라 **방향과 변곡**을 보는 자리다. */
+  const aspItems = batteryItems(B)
+    .filter(r => (r.aspM||[]).some(v=>v!=null) && r.stage !== "equipment")
+    .sort((a,b)=>(b.usd||0)-(a.usd||0)).slice(0, 6);
+  const aser = aspItems.map((r,i)=>({name:r.label, c:SER[i % SER.length],
+                                     v:ma3(r.aspM||[]), off:i>=3}));
+  const drawA = () => lineChart(document.getElementById("basp"), B.months, aser,
+    {w:520,h:250,padR:92,label:"품목별 수출 단가",
+     fmtY:v=>"$"+(v>=100?Math.round(v):v.toFixed(1)),
+     fmtT:v=>"$"+v.toFixed(2)+"/kg"});
+  const lga = document.getElementById("lg-basp");
+  if (lga){
+    lga.innerHTML = aser.map((x,i)=>`<button class="lg" type="button" data-i="${i}"
+      aria-pressed="${!x.off}"><span class="sw" style="background:var(${x.c})"></span>${
+        esc(x.name)}</button>`).join("");
+    lga.addEventListener("click", e=>{
+      const b=e.target.closest(".lg"); if(!b) return;
+      const i=+b.dataset.i;
+      if (aser.filter(x=>!x.off).length===1 && !aser[i].off) return;
+      aser[i].off=!aser[i].off;
+      b.setAttribute("aria-pressed", String(!aser[i].off));
+      drawA();
+    });
+    drawA();
+  }
+  // 장비는 대당 단가라 $/kg 국면이 의미가 없다 — 지도에서 뺀다
+  drawPcbQuad(document.getElementById("bquad"),
+    batteryItems(B).filter(r=>r.stage!=="equipment")
+      .map(r=>({...r, kind:"code", name:r.label, hub:false,
+                valueYoy:r.yoy, usd:r.usd})), B.minWgtKg);
 
   if (idx){
     lineChart(document.getElementById("bidx"), B.months,
@@ -2140,12 +2227,14 @@ const pvb = v => v ? `<span class="vdi ${PQV[v.code]||""}" title="${esc(v.note||
 /* 단가 국면 지도. drawNationQuad 와 형태는 같지만 축 범위를 **데이터에서** 잡는다 —
    PCB 의 월별 변동폭은 화장품보다 훨씬 좁아서, 고정 범위를 쓰면 점이 전부
    한가운데 뭉쳐 국면이 안 보인다. */
-function drawPcbQuad(mount, pts, aLab){
+function drawPcbQuad(mount, pts, minWgt){
   if (!mount) return;
   const live = pts.filter(p=>p.qtyYoy!=null && p.priceYoy!=null && p.usd>0);
   if (live.length < 2){
+    // ★ 전역(PCB)을 참조하면 2차전지 탭에서 부를 때 엉뚱한 숫자를 말한다
+    const w = minWgt ?? PCB?.minWgtKg ?? BAT?.minWgtKg ?? 1000;
     mount.innerHTML = '<p class="pnote">물량·단가를 둘 다 낼 수 있는 항목이 부족합니다 '+
-      '(중량 '+(PCB?PCB.minWgtKg.toLocaleString():"1,000")+'kg 미만은 단가를 내지 않습니다).</p>';
+      '(중량 '+w.toLocaleString()+'kg 미만은 단가를 내지 않습니다).</p>';
     return;
   }
   const W=760,H=400,M={t:18,r:26,b:46,l:58}, iw=W-M.l-M.r, ih=H-M.t-M.b;
@@ -2627,7 +2716,7 @@ function renderPcb(){
       '<p class="pnote">금액과 중량이 함께 잡히는 달이 없어 지수를 만들 수 없습니다.</p>';
   }
 
-  drawPcbQuad(document.getElementById("pquad"), codePts.concat(cty));
+  drawPcbQuad(document.getElementById("pquad"), codePts.concat(cty), D.minWgtKg);
 
   /* 지역 — 리포트 그림16~21 에 해당한다. 중량이 없으므로 **금액만**이다. */
   const pl = D.places;
