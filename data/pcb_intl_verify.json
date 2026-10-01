@@ -494,8 +494,8 @@
   "siblings": 5,
   "pulled": 4,
   "addedRows": 576,
-  "fullRefresh": true,
-  "haveMonths": 12,
+  "fullRefresh": false,
+  "haveMonths": 48,
   "ids": [
    {
     "id": "0004061824",

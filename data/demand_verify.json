@@ -1,6 +1,6 @@
 {
  "start": "2021-01",
- "end": "2026-08",
+ "end": "2026-09",
  "census": {
   "rows": 1104,
   "codes": {
@@ -205,9 +205,9 @@
       "Natural Gas Fired Combustion Turbine=",
       "Offshore Wind Turbine=",
       "All Other=",
-      "Flywheels=",
       "Geothermal=",
       "Natural Gas Steam Turbine=",
+      "Flywheels=",
       "None=",
       "Batteries=",
       "Conventional Steam Coal=",
