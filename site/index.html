@@ -2575,13 +2575,18 @@ function renderPcb(){
       ${D.intl.ok ? `
       <section class="panel p12">
         <div class="phead"><h2 class="ptitle">해외 대조축 — 일본 품목별 생산
-            <span class="pu high">연결됨</span></h2>
+            <span class="pu warn">${esc(D.intl.cadence?.freq || "갱신주기 확인")} 갱신</span></h2>
           <span class="unit">METI 생산동태통계 · 일본 기준월 ${esc(D.intl.asOf)}${
             D.intl.cross.lagMonths ? ` · 한국보다 ${D.intl.cross.lagMonths}개월 뒤` : ""}</span></div>
-        ${D.intl.cross.lagMonths ? `<p class="warn">일본 「時系列表」는 <b>연 1회 공표</b>라
-          최신이 ${esc(D.intl.asOf)}입니다 — 한국(${esc(D.intl.cross.krAsOf||"")})보다
-          <b>${D.intl.cross.lagMonths}개월 뒤</b>입니다. 그래서 교차 판정은 두 축을
-          <b>같은 기간(${esc(D.intl.cross.window||"")})</b>으로 맞춰 계산했습니다.</p>` : ""}
+        <p class="warn"><b>이 패널은 월간 지표가 아닙니다.</b> ${
+          mdb(D.intl.cadence?.note || "")}
+          ${D.intl.cadence?.nextAt ? `다음 갱신은 <b>${esc(D.intl.cadence.nextAt)}경</b>
+            (${esc(D.intl.cadence.label||"")})이므로, 그때까지 아래 숫자는 <b>바뀌지
+            않습니다</b>.` : ""}
+          ${D.intl.cross.lagMonths ? `한국(${esc(D.intl.cross.krAsOf||"")})보다
+            <b>${D.intl.cross.lagMonths}개월 뒤</b>라, 교차 판정은 두 축을
+            <b>같은 기간(${esc(D.intl.cross.window||"")})</b>으로 맞춰 계산했습니다.` : ""}
+          <br><span class="dimc">${mdb(D.intl.cadence?.monthlyPath || "")}</span></p>
         <p class="pnote">한국 ASP 가 올랐을 때 그게 <b>고다층·패키지기판으로의 믹스 전환</b>인지
           <b>구리값·환율</b>인지는 한국 데이터만으로 못 가릅니다 — HS 8534 에 층수 구분이
           없기 때문입니다. 일본은 品目別로 쪼개 주므로 고부가 비중의 방향을 따로 볼 수
@@ -2647,10 +2652,13 @@ function renderPcb(){
           <span class="dimc">${esc(D.intl.credit||"")}</span></p>
       </section>
       <section class="panel p12">
-        <div class="phead"><h2 class="ptitle">아직 붙이지 않은 축</h2>
-          <span class="unit">전부 무료 출처</span></div>
-        <p class="pnote">${mdb(D.intl.why)}</p>
-        ${intlDecl(D)}
+        <div class="phead"><h2 class="ptitle">이 탭이 못 보는 것</h2>
+          <span class="unit">해석의 한계</span></div>
+        <p class="pnote"><b>재고순환</b>을 볼 수 없습니다 — 관세 통계에 재고 개념이 없고,
+          위 일본 통계표는 生産만 줍니다. <b>수주/출하(B/B Ratio)</b>도 없습니다.
+          둘 다 "지금 꺾이는 중인가"를 가장 먼저 말해 주는 지표라, 이 탭은
+          <b>이미 일어난 일</b>을 읽는 화면이지 전환점을 먼저 잡는 화면이 아닙니다.
+          붙일 수 있는 후보와 그 근거는 저장소의 <code>claude/</code> 문서에 있습니다.</p>
       </section>` : `
       <section class="panel p12">
         <div class="phead"><h2 class="ptitle">해외 대조축 — 아직 연결 전</h2>
