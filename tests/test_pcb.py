@@ -470,6 +470,48 @@ def test_cross_check_aligns_periods_when_japan_lags():
           f"vs 최신 {cx['krAspYoyLatest']}% · [{cx['verdict']['label']}]")
 
 
+def test_cadence_is_stated_because_the_axis_is_annual():
+    """이 축은 **1년에 한 번** 바뀐다. 월간 화면에 그냥 두면 '최신 숫자'로 오해된다.
+
+    e-Stat 의 DB(API)에는 2011년 이후 월차 표가 없다 — 월차 DB 표(0003058554)는
+    2010-12 에서 멈췄고, 우리가 쓰는 「{연도}年 時系列表」 는 年報 산하라 매년
+    6월 말에 한 번 갱신된다(2021~2025년 표의 공개일이 전부 6월 말).
+    """
+    td = Path(tempfile.mkdtemp()); db = td / "p.sqlite"
+    kr_months = _fixture(db)
+    with Store(db) as s:
+        s.upsert_demand(_jp_rows([m for m in kr_months if m <= "2025-12"], hv_up=True))
+    pl = _build(db)
+    c = pl["intl"]["cadence"]
+    assert c["freq"] == "연 1회", c
+    assert c["nextAt"] == "2026-06", c          # 최신 2025-12 → 다음은 2026-06
+    assert "월차" in c["note"] and "파일" in c["note"], c["note"]
+    assert "確報" in c["monthlyPath"], c["monthlyPath"]
+
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    assert "월간 지표가 아닙니다" in html, "갱신주기 경고가 화면에 없다"
+    assert "cadence?.nextAt" in html, "다음 갱신 시점을 화면에 적지 않는다"
+    print(f"  ✓ 갱신주기 명시 — {c['freq']} · 다음 {c['nextAt']}경 · "
+          f"월차 경로(파일) 안내 포함")
+
+
+def test_roadmap_panel_is_not_shown_once_connected():
+    """'아직 붙이지 않은 축' 은 로드맵이다. 월간으로 보는 화면에서 '안 만든 것 목록'은
+    판단에 아무것도 더하지 않는다 — 연결 전에만 띄우고, 연결된 뒤엔 **못 보는 것**
+    한 줄만 남긴다."""
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    i = html.index("해외 대조축 — 일본 품목별 생산")
+    j = html.index("코드 검증")
+    connected = html[i:j]
+    assert "아직 붙이지 않은 축" not in connected, \
+        "연결된 상태에서 로드맵 표를 띄운다"
+    assert "이 탭이 못 보는 것" in connected
+    assert "재고순환" in connected and "B/B Ratio" in connected
+    # 연결 전 분기에는 선언 표가 남아 있어야 한다 (거기선 그게 내용의 전부다)
+    assert "intlDecl(D)" in html
+    print("  ✓ 연결 후엔 로드맵 대신 '못 보는 것' 한 줄 · 연결 전엔 선언 표 유지")
+
+
 def test_intl_contradiction_is_reported():
     """일본 고부가 비중이 **빠지는데** 한국 ASP 가 오르면 경고여야 한다."""
     td = Path(tempfile.mkdtemp()); db = td / "p.sqlite"
