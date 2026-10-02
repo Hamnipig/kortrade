@@ -2,7 +2,7 @@
  "start": "2021-01",
  "end": "2026-09",
  "census": {
-  "rows": 1104,
+  "rows": 1140,
   "codes": {
    "8507600030": {
     "label": "컨테이너형 ESS(외함 수납)",
@@ -67,16 +67,6 @@
    "4850": "ROMANIA",
    "4890": "TURKEY",
    "5081": "ISRAEL",
-   "0003": "EUROPEAN UNION",
-   "0014": "PACIFIC RIM COUNTRIES",
-   "0020": "USMCA (NAFTA)",
-   "0021": "TWENTY LATIN AMERICAN REPUBLICS",
-   "0022": "OECD",
-   "0023": "NATO",
-   "0024": "LAFTA",
-   "0025": "EURO AREA",
-   "0026": "APEC",
-   "0027": "ASEAN",
    "1220": "CANADA",
    "2010": "MEXICO",
    "2440": "CAYMAN ISLANDS",
@@ -90,8 +80,6 @@
    "4710": "PORTUGAL",
    "4792": "SLOVENIA",
    "4801": "SERBIA",
-   "0017": "CAFTA-DR",
-   "0028": "CACM",
    "2230": "COSTA RICA",
    "7910": "SOUTH AFRICA",
    "5200": "UNITED ARAB EMIRATES",
@@ -129,8 +117,8 @@
     "Hydroelectric Pumped Storage",
     "Natural Gas with Compressed Air Storage",
     "Batteries",
-    "Solar Thermal with Energy Storage",
-    "Solar Thermal without Energy Storage"
+    "Solar Thermal without Energy Storage",
+    "Solar Thermal with Energy Storage"
    ],
    "names": [
     "",
@@ -194,13 +182,13 @@
      "technology": [
       "Hydroelectric Pumped Storage=",
       "Municipal Solid Waste=",
-      "Natural Gas with Compressed Air Storage=",
       "Nuclear=",
       "Other Gases=",
       "Other Waste Biomass=",
       "Petroleum Coke=",
       "Petroleum Liquids=",
       "Wood/Wood Waste Biomass=",
+      "Natural Gas with Compressed Air Storage=",
       "Conventional Hydroelectric=",
       "Natural Gas Fired Combustion Turbine=",
       "Offshore Wind Turbine=",
@@ -215,8 +203,8 @@
       "Natural Gas Fired Combined Cycle=",
       "Onshore Wind Turbine=",
       "Other Natural Gas=",
-      "Solar Thermal with Energy Storage=",
-      "Solar Thermal without Energy Storage="
+      "Solar Thermal without Energy Storage=",
+      "Solar Thermal with Energy Storage="
      ]
     }
    }
