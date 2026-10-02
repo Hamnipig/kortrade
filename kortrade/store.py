@@ -271,6 +271,20 @@ class Store:
         재수집 시 revisions 에 변경이 잡히는 것이 정상이다."""
         return self._upsert("demand_series", DEMAND_COLS, DEMAND_KEY, rows)
 
+    def purge_demand(self, source: str, like: str) -> int:
+        """잘못 저장된 계열을 지운다. UPSERT 는 **덮어쓰기만** 하므로, 한 번 들어온
+        쓰레기 계열은 수집기를 고쳐도 DB 에 영원히 남아 화면에 계속 나온다.
+
+        실제 사고(2026-10-02): 집계그룹(APEC·OECD·ASEAN…)이 원산지로 저장돼
+        있었다. 수집 필터를 고쳐도 이미 저장된 `…:C:0026` 행은 그대로 남아
+        원산지 표에 'APEC 24.8%' 가 계속 찍힌다 — 지워야 사라진다.
+        """
+        cur = self.conn.execute(
+            "DELETE FROM demand_series WHERE source = ? AND series LIKE ?",
+            (source, like))
+        self.conn.commit()
+        return cur.rowcount or 0
+
     def demand(self, source: str, series: str | None = None) -> dict[str, dict[str, float]]:
         """{series: {period: value}} 로 돌려준다."""
         sql = "SELECT series, period, value FROM demand_series WHERE source = ?"

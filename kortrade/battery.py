@@ -29,7 +29,7 @@ import yaml
 # ★ 레이어는 다른 레이어를 import 하지 않는다. 공용 통계는 stats 에서 가져온다.
 #   (전에 flash.py 에서 가져오다가, battery.py 만 배포하고 flash.py 를 빼먹어
 #    ImportError 로 수집이 통째로 멈춘 적이 있다.)
-from .localization import localization, verdict as loc_verdict
+from .localization import localization, supply_verdict, verdict as loc_verdict
 # unit_price / growth / best_lag 는 PCB 레이어도 쓴다. 공용 자리(stats)로 옮기고
 # 여기서 다시 export 한다 — 호출부(B.growth 등)와 테스트는 그대로 동작한다.
 from .stats import (LAG_MARGIN, best_lag, corr, growth, ols,   # noqa: F401
@@ -77,6 +77,7 @@ class BatteryConfig:
     min_r2: float = 0.25
     leadlag_max_months: int = 6
     markets: list[str] = field(default_factory=list)
+    supply_markets: list[str] = field(default_factory=list)
     cost: list[Code] = field(default_factory=list)
     price: list[Code] = field(default_factory=list)
     stages: dict[str, list[Code]] = field(default_factory=dict)
@@ -139,6 +140,10 @@ class BatteryConfig:
             # YAML 1.1 이 NO/ON/OFF 를 불리언으로 읽는다. 따옴표가 빠지면 여기서 잡힌다.
             if not isinstance(m, str) or len(m) != 2 or not m.isupper():
                 errs.append(f"시장코드 {m!r} 형식 오류 (따옴표 누락 의심)")
+        for m in self.supply_markets:
+            # 수집하지 않는 나라를 공급기지로 적으면 화면에 영원히 안 나온다
+            if m not in self.markets:
+                errs.append(f"공급기지 '{m}' 가 markets 에 없다 — 수집되지 않는다")
         # 원가 자리에 수출 코드를 넣는 사고를 막는다 (사용자 제시 목록의 실제 오류)
         price_codes = {c.code for c in self.price}
         for c in self.cost:
@@ -173,6 +178,7 @@ def load(path: Path | None = None) -> BatteryConfig:
         min_r2=float(sp.get("min_r2", 0.25)),
         leadlag_max_months=int(cfg.get("leadlag_max_months", 6)),
         markets=list(cfg.get("markets") or []),
+        supply_markets=[str(m) for m in (cfg.get("supply_markets") or [])],
         cost=_codes(cfg.get("cost")),
         price=_codes(cfg.get("price")),
         stages={s: _codes((cfg.get("stages") or {}).get(s)) for s in STAGES},

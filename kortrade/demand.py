@@ -54,6 +54,21 @@ class ImportCode:
 
 
 @dataclass
+class Base:
+    """한국 기업의 해외 생산기지 — 원산지 귀속 보정에 쓰는 한 줄.
+
+    match 는 **Census 응답의 CTY_NAME** 과 맞춘다. 코드로 맞추면 오타가 조용히
+    다른 나라를 센다. code 는 사람이 읽는 참고값일 뿐 매칭에 쓰지 않는다.
+    """
+    match: str
+    label: str = ""
+    code: str = ""
+    who: str = ""
+    kind: str = ""
+    why: str = ""
+
+
+@dataclass
 class DemandConfig:
     version: str = ""
     window: int = 8
@@ -63,6 +78,7 @@ class DemandConfig:
     dataset: str = "timeseries/intltrade/imports/hs"
     imports_enabled: bool = True
     codes: list[ImportCode] = field(default_factory=list)
+    bases: list[Base] = field(default_factory=list)
     cap_enabled: bool = True
     routes: list[str] = field(default_factory=list)
     facet_candidates: list[str] = field(default_factory=list)
@@ -85,6 +101,13 @@ class DemandConfig:
             # draft 를 승격할 근거가 코드 안에 있어야 자동 검증이 가능하다
             if c.status == "draft" and not c.expect:
                 errs.append(f"{c.code}: draft 인데 expect(설명 대조 문자열)가 없다")
+        for b in self.bases:
+            # ★ 집계그룹(0으로 시작)을 기지로 적으면 전세계 합계와 이중계상된다
+            if b.code and b.code.startswith("0"):
+                errs.append(f"kr_bases '{b.match}': 0 으로 시작하는 코드는 "
+                            f"국가가 아니라 집계그룹이다")
+            if b.match == self.partner or b.match in ("KOREA", "KOREA SOUTH"):
+                errs.append("kr_bases 에 한국을 넣으면 한국이 두 번 더해진다")
         if not (self.partner.isdigit() and len(self.partner) == 4):
             errs.append(f"partner '{self.partner}': Census CTY_CODE 는 4자리")
         if self.cap_enabled and not self.routes:
@@ -110,6 +133,11 @@ def load(path: Path | None = None) -> DemandConfig:
                           status=c.get("status", "draft"), expect=c.get("expect", ""),
                           why=c.get("why", ""))
                for c in (imp.get("codes") or [])],
+        bases=[Base(match=str(b.get("match", "")).upper(),
+                    label=b.get("label", ""), code=str(b.get("code", "")),
+                    who=b.get("who", ""), kind=b.get("kind", ""),
+                    why=b.get("why", ""))
+               for b in (raw.get("kr_bases") or []) if b.get("match")],
         cap_enabled=bool(cap.get("enabled", True)),
         routes=[str(r) for r in (cap.get("routes") or [])],
         facet_candidates=[str(f) for f in (cap.get("facet_candidates") or [])],
@@ -121,6 +149,36 @@ def load(path: Path | None = None) -> DemandConfig:
         share_pp=float(th.get("share_pp", 3.0)),
         min_base_usd=float(th.get("min_base_usd", 20_000_000.0)),
     )
+
+
+def is_base(cfg: DemandConfig, cty_code: str, cty_name: str = "") -> bool:
+    """이 원산지가 한국 기업의 해외 생산기지인가.
+
+    이름으로 먼저 맞추고(응답이 준 CTY_NAME), 이름이 비었을 때만 코드로 맞춘다.
+    ★ 집계그룹(0으로 시작)은 어떤 경우에도 기지가 아니다 — 들어오면 전세계
+      합계와 이중계상된다.
+    """
+    cc = str(cty_code or "")
+    if cc.startswith("0"):
+        return False
+    nm = str(cty_name or "").upper()
+    for b in cfg.bases:
+        if nm and b.match in nm:
+            return True
+        if not nm and b.code and b.code == cc:
+            return True
+    return False
+
+
+def base_of(cfg: DemandConfig, cty_code: str, cty_name: str = "") -> Base | None:
+    """맞는 기지 정의를 돌려준다 (화면에 who·kind 를 같이 쓰기 위해)."""
+    cc, nm = str(cty_code or ""), str(cty_name or "").upper()
+    if cc.startswith("0"):
+        return None
+    for b in cfg.bases:
+        if (nm and b.match in nm) or (not nm and b.code and b.code == cc):
+            return b
+    return None
 
 
 # ── 판정 ─────────────────────────────────────────────────────────────────
@@ -139,7 +197,9 @@ def attribute(kr_yoy: float | None, imp_yoy: float | None,
               cap_yoy: float | None, flat: float = 5.0,
               share_pp: float = 3.0,
               loc_now: float | None = None,
-              loc_prev: float | None = None) -> dict:
+              loc_prev: float | None = None,
+              wide_now: float | None = None,
+              wide_prev: float | None = None) -> dict:
     """한국 수출 감소가 무엇 때문인지 가른다.
 
     ★ 이 판정의 목적은 하나다 — **'현지화'와 '점유율 상실'을 혼동하지 않는 것.**
@@ -192,7 +252,46 @@ def attribute(kr_yoy: float | None, imp_yoy: float | None,
     #   (c)는 화면의 원산지 분해표에서 폴란드·헝가리가 오르는 것으로 보인다.
     loc_up = (loc_now is not None and loc_prev is not None and loc_prev > 0
               and loc_now / loc_prev >= LOC_JUMP)
+    # 한국기업 귀속 비중(한국 + 해외기지) 의 변화. 한국發 비중과 **갈라지는지**가
+    # 기지 이전과 경쟁 패배를 가르는 가장 직접적인 증거다.
+    d_wide = (None if (wide_now is None or wide_prev is None)
+              else round(wide_now - wide_prev, 1))
     if i is not None and i > 0 and d_share is not None and d_share <= -share_pp:
+        # ★ 2026-10-02 추가. 한국發 비중은 빠졌는데 **한국기업 귀속 비중은
+        #   지켜졌다면** 물건이 사라진 게 아니라 **선적지가 바뀐 것**이다.
+        #   (말레이시아·폴란드·헝가리 공장에서 미국으로 직송)
+        #   이 경우를 '점유율 상실'이라고 쓰면 멀쩡한 기업을 구조적 훼손으로
+        #   오판한다. 기지 축이 있을 때는 현지화지수보다 이 증거가 더 직접적이다.
+        if d_wide is not None and d_wide > -share_pp:
+            return {"code": "base_shift", "label": "기지 이전 (선적지만 바뀜)",
+                    "shareChg": d_share, "wideChg": d_wide,
+                    "note": "한국發 비중은 떨어졌지만 **한국기업 귀속 비중(한국＋해외"
+                            "기지)은 지켜졌습니다.** 물량이 사라진 것이 아니라 선적지가 "
+                            "해외 기지로 옮겨간 쪽입니다 — 통관 수출은 줄지만 그 기업의 "
+                            "실적은 유지되거나 늘 수 있습니다. 어느 기지가 받았는지는 "
+                            "원산지 분해표에서 확인하십시오. ※ 귀속 비중은 **상한**입니다 "
+                            "(그 나라發 전량이 한국 기업 물량이라는 보장은 없습니다)."}
+        # ★ 순서가 중요하다. 2026-10-02 테스트가 잡은 실수:
+        #   기지 관측이 없을 때 wide 는 한국發과 같은 값이 되므로 "둘 다 하락"이
+        #   항상 참이 되어, 미국 **현지 조립**으로 설명되는 localizing 판정을
+        #   통째로 덮어 버렸다. 미국 내 생산은 어느 나라 원산지에도 안 잡히므로
+        #   귀속 비중이 떨어진다는 사실은 현지화를 **배제하지 않는다.**
+        #   그래서 현지화지수 증거를 먼저 본다.
+        if loc_up:
+            return {"code": "localizing", "label": "현지화 (비중 하락은 생산지 이동)",
+                    "shareChg": d_share, "wideChg": d_wide,
+                    "note": "미국 수입에서 한국 비중은 떨어졌지만 **현지화지수가 함께 "
+                            "올랐습니다.** 부품·소재는 계속 한국에서 나가고 있다는 뜻이므로, "
+                            "경쟁 패배가 아니라 조립이 미국으로 옮겨간 쪽입니다. "
+                            "현지법인 매출은 DART 부문정보로 확인하십시오."}
+        if d_wide is not None and d_wide <= -share_pp:
+            return {"code": "share_loss", "label": "점유율 상실 (기지 포함해도 하락)",
+                    "shareChg": d_share, "wideChg": d_wide,
+                    "note": "한국發 비중과 **해외 기지를 더한 귀속 비중이 함께 "
+                            "떨어졌습니다.** 선적지 이동으로 설명되지 않습니다 — "
+                            "기지 이전·현지화 가설이 모두 배제되므로 경쟁에서 밀린 "
+                            "쪽입니다. 원산지 분해표에서 어느 나라가 그 자리를 "
+                            "가져갔는지 확인하십시오."}
         if loc_up:
             return {"code": "localizing", "label": "현지화 (비중 하락은 생산지 이동)",
                     "shareChg": d_share,

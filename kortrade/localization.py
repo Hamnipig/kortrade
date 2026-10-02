@@ -70,3 +70,47 @@ def verdict(final_yoy: float | None, total_yoy: float | None,
                 "note": "체인이 커지면서 현지 조립 비중도 오르는 중입니다."}
     return {"code": "expanding", "label": "성장",
             "note": "완제품과 체인이 함께 늘고 있습니다."}
+
+
+def supply_verdict(up_yoy: float | None, eq_yoy: float | None,
+                   flat: float = 5.0) -> dict:
+    """**공급기지**용 판정 — 수요시장과 묻는 질문이 다르다.
+
+    수요시장에서는 "완제품이 줄고 부품이 늘면 현지화"를 묻는다. 공급기지에서는
+    완제품 수출이 애초에 거의 없으므로 그 질문이 성립하지 않는다 (분모가 0 에
+    가까워 현지화지수가 폭발한다). 묻는 것은 둘이다:
+        상류(부품·소재) 수출  → 그 공장이 **지금 돌고 있나** (가동률)
+        장비 수출              → **증설하고 있나** (CAPEX, 보통 1~2분기 선행)
+
+    ★ 왜 이게 기업 실적에 선행하는가: 그 기지의 생산물은 현지에서 북미로
+      직송되므로 **한국 통관 수출에서 사라진다.** 상류가 버티는데 한국發 對美
+      수출만 빠지면 수요 위축이 아니라 선적지 이동이다 — 투자 판단이 정반대다.
+    ★ 한계: 상류 수출은 재고 선행 구매에도 움직인다. 한 달치로 가동률을
+      확정하지 않는다 — 방향과 가속만 본다.
+    """
+    u = None if up_yoy is None else (+1 if up_yoy > flat else (-1 if up_yoy < -flat else 0))
+    e = None if eq_yoy is None else (+1 if eq_yoy > flat else (-1 if eq_yoy < -flat else 0))
+    if u is None:
+        return {"code": "unknown", "label": "판정 불가",
+                "note": "상류(부품·소재) 수출의 전년 동기 데이터가 부족합니다."}
+    if u > 0 and e is not None and e > 0:
+        return {"code": "ramp", "label": "가동 확대 + 증설",
+                "note": "소재와 장비가 함께 늘고 있습니다 — 이 기지는 돌면서 더 깔고 "
+                        "있습니다. 장비는 보통 가동보다 1~2분기 앞섭니다."}
+    if u > 0:
+        return {"code": "running", "label": "가동 확대",
+                "note": "소재 수출이 늘고 있습니다 — 이 기지의 생산이 늘고 있다는 "
+                        "쪽입니다. 장비는 늘지 않아 추가 증설 신호는 아닙니다. "
+                        "※ 재고 선행 구매와 구분되지 않으니 방향만 보십시오."}
+    if u < 0 and e is not None and e > 0:
+        return {"code": "preparing", "label": "증설 선행 (가동은 아직)",
+                "note": "장비는 들어가는데 소재는 줄었습니다 — 라인을 깔는 중이고 "
+                        "양산 전일 수 있습니다. 소재가 따라 오르는지 다음 달에 "
+                        "확인하십시오."}
+    if u < 0:
+        return {"code": "slowing", "label": "가동 둔화",
+                "note": "소재 수출이 줄었습니다 — 이 기지의 생산이 줄었을 가능성입니다. "
+                        "한국發 對美 수출도 함께 줄었다면 선적지 이동이 아니라 "
+                        "**수요 쪽**을 봐야 합니다."}
+    return {"code": "flat", "label": "보합",
+            "note": "소재 수출이 전년 수준입니다. 가동률 변화 신호가 없습니다."}
