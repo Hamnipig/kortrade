@@ -353,6 +353,281 @@ def test_wired_into_site_and_workflow():
     print("  ✓ 화면·자동화 연결 (합산 금지 경고 포함)")
 
 
+def test_aggregate_country_groupings_never_enter_the_world_total():
+    """★ 2026-10-02 실측 버그. 이 축에서 가장 큰 숫자 오류였다.
+
+    실제로 저장돼 있던 원산지 상위 목록(site/data/battery.json):
+        APEC         $2,446.2M (24.8%)
+        PACIFIC RIM  $2,144.1M (21.8%)
+        OECD         $1,664.9M (16.9%)
+        ASEAN          $440.1M  (4.5%)
+        NATO           $227.9M  (2.3%)
+    이들은 **나라가 아니라 집계그룹**이다. 그런데 코드가 0026·0014·0022·0027·
+    0023 으로 전부 4자리 숫자라서 "4자리 숫자만 센다" 필터를 그대로 통과했다.
+    결과: 전세계 합계(:ALL)에 같은 물건이 여러 번 더해져 분모가 부풀고,
+    **한국 비중이 그만큼 가짜로 낮게** 찍혔다. 그 비중을 받아 attribute() 가
+    'share_loss(점유율 상실)' 쪽으로 기울었다 — 숫자 하나가 판정을 뒤집는 자리다.
+
+    방어는 두 겹이다. 서버에서 거르고(SUMMARY_LVL=DET), 응답에서도 거른다
+    (0으로 시작하는 코드 제외). 파라미터가 무시돼도 합계가 깨지지 않게 한다.
+    """
+    src = (ROOT / "scripts" / "run_demand.py").read_text(encoding="utf-8")
+    assert '"SUMMARY_LVL": "DET"' in src, \
+        "집계그룹을 서버에서 거르지 않는다 — variables.json: " \
+        "\"Detail ('DET') or Country Grouping ('CGP') indicator\""
+    assert 'cc.startswith("0")' in src, \
+        "응답 쪽 2차 방어가 없다 — 집계그룹 코드는 전부 0 으로 시작한다"
+    # 실행되는 줄에서 확인한다 (주석에만 있으면 방어가 아니다)
+    cen = src.split("def collect_census")[1].split("\ndef ")[0]
+    code = "\n".join(l for l in cen.splitlines() if not l.lstrip().startswith("#"))
+    assert "SUMMARY_LVL" in code and 'cc.startswith("0")' in code, \
+        "방어가 주석에만 있다"
+    # 집계그룹이 기지 목록으로 들어오는 것도 막혀야 한다
+    cfg = D.load()
+    assert not D.is_base(cfg, "0027", "ASEAN"), "집계그룹이 '기지'로 인정됐다"
+    assert not D.is_base(cfg, "0026", "APEC")
+    # ★ UPSERT 는 덮어쓰기만 한다 — 이미 저장된 집계그룹 계열(…:C:0026)은
+    #   수집 필터를 고쳐도 DB 에 남아 원산지 표에 계속 찍힌다. 지워야 사라진다.
+    assert 'purge_demand("census"' in src, \
+        "옛 실행이 남긴 집계그룹 계열을 지우지 않는다 — 화면에 APEC 이 계속 남는다"
+    st_src = (ROOT / "kortrade" / "store.py").read_text(encoding="utf-8")
+    assert "def purge_demand" in st_src and "DELETE FROM demand_series" in st_src
+    # 빌드 쪽에도 마지막 방어가 있어야 한다 (DB 에 남아 있어도 화면에 안 올린다)
+    bsrc = (ROOT / "scripts" / "build_battery.py").read_text(encoding="utf-8")
+    bcode = "\n".join(l for l in bsrc.splitlines() if not l.lstrip().startswith("#"))
+    assert 'cc.startswith("0")' in bcode, "빌드 쪽 집계그룹 방어가 없다"
+    print("  ✓ 집계그룹 차단 — DET + 응답 필터 + 빌드 필터 (3중) · 옛 계열 삭제")
+
+
+def test_overseas_bases_are_separated_from_competitors():
+    """한국 기업의 해외 기지發을 '경쟁사'로 세면 멀쩡한 기업이 훼손으로 읽힌다.
+
+    말레이시아가 이 축에 들어온 이유:
+      국내 ESS·원통형 부품사가 말레이시아에 생산을 이원화해 뒀고, 그 기지의
+      생산물은 **현지에서 북미로 직송**된다. 즉 한국 통관 수출에서 사라진다.
+      한국發 비중만 보면 "하락"이지만 물건은 사라지지 않았다.
+    """
+    cfg = D.load()
+    assert cfg.bases, "한국 기업 해외기지 목록(kr_bases)이 없다"
+    labels = {b.label for b in cfg.bases}
+    assert "말레이시아" in labels, "말레이시아가 기지 목록에 없다"
+    # ★ 매칭은 코드가 아니라 이름으로 — 손으로 적은 코드 오타가 다른 나라를 센다
+    assert D.is_base(cfg, "5570", "MALAYSIA"), "이름 매칭이 안 된다"
+    assert D.is_base(cfg, "9999", "MALAYSIA"), \
+        "코드가 달라도 이름이 맞으면 기지다 (코드는 참고값이어야 한다)"
+    # 중국은 절대 기지가 아니다 — 중국發 대미 수입의 대부분은 중국 기업 물량이고,
+    # 넣으면 '한국기업 귀속 상한'이 무의미해진다
+    assert not D.is_base(cfg, "5700", "CHINA"), \
+        "중국을 기지로 넣으면 귀속 상한이 의미를 잃는다"
+    # 한국을 기지로 넣으면 두 번 더해진다 — 설정 검증이 잡아야 한다
+    bad = D.DemandConfig(codes=[D.ImportCode("8507600030", "x", "draft", "y")],
+                         bases=[D.Base(match="KOREA", label="한국")],
+                         cap_enabled=False)
+    assert any("두 번" in e for e in bad.validate()), bad.validate()
+    print(f"  ✓ 기지 {len(cfg.bases)}개 — 이름 매칭 · 중국/한국 배제")
+
+
+def test_base_shift_is_not_called_share_loss():
+    """한국發 비중이 빠졌을 때, 기지 포함 비중이 지켜지면 **기지 이전**이다.
+
+    이게 이 변경의 핵심이다. 같은 '비중 하락' 그림에서
+        기지 포함해도 하락 → 점유율 상실 (구조적 훼손)
+        기지 포함하면 유지 → 기지 이전   (실적은 멀쩡할 수 있다)
+    두 판정은 투자 결론이 정반대다. 한 줄만 보면 영원히 구분할 수 없다.
+    """
+    # 시장 +20%, 한국發 비중 16%→10% (−6%p)
+    shift = D.attribute(-13, 20, 10.0, 16.0, 5.0, wide_now=18.0, wide_prev=19.0)
+    assert shift["code"] == "base_shift", shift
+    assert shift["wideChg"] == -1.0, shift
+    assert "상한" in shift["note"], "상한이라는 경고가 판정문에서 빠졌다"
+
+    lost = D.attribute(-13, 20, 10.0, 16.0, 5.0, wide_now=12.0, wide_prev=19.0)
+    assert lost["code"] == "share_loss", lost
+
+    # 기지 축이 없으면 예전 경로(현지화지수)로 떨어져야 한다 — 단정하지 않는다
+    none_ = D.attribute(-13, 20, 10.0, 16.0, 5.0)
+    assert none_["code"] == "share_down_unknown", none_
+    print(f"  ✓ 기지 이전 ≠ 점유율 상실 — [{shift['label']}] vs [{lost['label']}]")
+
+
+def test_supply_market_is_judged_by_utilization_not_localization():
+    """공급기지는 현지화지수로 판정하면 안 된다 — 완제품 분모가 0 에 가깝다.
+
+    말레이시아는 수요처가 아니라 삼성SDI 의 **공장이 있는 곳**이다. 거기로 가는
+    완제품(ESS 셀) 수출은 거의 없고, 한국發 **부품·소재가 곧 그 공장의 가동률**,
+    **장비가 증설**이다. 같은 숫자를 (부품+소재)/완제품 으로 나누면 분모가 0 에
+    가까워 지수가 폭발하고 '현지화 완료'라는 가짜 판정이 나온다.
+    """
+    bt = B.load()
+    assert "MY" in bt.markets, "말레이시아 국가 분해를 수집하지 않는다"
+    assert "MY" in bt.supply_markets, "말레이시아가 공급기지로 분류돼 있지 않다"
+    assert bt.validate() == [], bt.validate()
+    # 수집하지 않는 나라를 공급기지로 적는 사고를 설정 검증이 잡아야 한다
+    import copy
+    bad = copy.copy(bt); bad.supply_markets = ["ZZ"]
+    assert any("ZZ" in e for e in bad.validate()), bad.validate()
+    # 판정: 소재↑ 장비↑ = 가동 확대 + 증설 / 소재↓ 장비↑ = 증설 선행
+    assert B.supply_verdict(22, 40)["code"] == "ramp"
+    assert B.supply_verdict(22, 0)["code"] == "running"
+    assert B.supply_verdict(-20, 40)["code"] == "preparing"
+    assert B.supply_verdict(-20, -10)["code"] == "slowing"
+    assert B.supply_verdict(None, 40)["code"] == "unknown", \
+        "상류 전년치가 없으면 가동률을 말할 수 없다"
+    print("  ✓ 공급기지 — 상류=가동률 / 장비=증설 (현지화지수 미적용)")
+
+
+def test_malaysia_cylindrical_caveat_is_on_screen():
+    """★ 말레이시아 기지는 **원통형**이다. ESS 컨테이너가 아니다.
+
+    삼성SDI 는 2022-07 세렘반 2공장 착공 때 원통형 라인에 1.7조원을 투자한다고
+    밝혔다. 따라서 말레이시아發 8507.60 물량은 8507600090(기타: 셀·모듈) 쪽에
+    떨어지고 8507600030(외함 수납 ESS 시스템)에는 거의 안 나타난다.
+    이 기지를 'ESS 귀속'으로 읽으면 틀린다 — 그 경고가 화면에 있어야 한다.
+    """
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    assert "원통형" in html, "말레이시아 기지의 품목 성격 경고가 화면에 없다"
+    assert "8507600090" in html, "원통형이 어느 코드로 떨어지는지 안 밝힌다"
+    for t in ("한국 기업 해외 생산기지發", "한국기업 기지", "공급기지",
+              "선적지 이동", "상한"):
+        assert t in html, f"화면에 '{t}' 가 없다"
+    # B/L 로는 금액 트래킹이 안 된다는 사실을 화면에 남긴다 (다시 제안되지 않게)
+    assert "CBP 가 삭제" in html, \
+        "미국 B/L 의 HS 코드가 벤더 추정값이라는 한계가 화면에 없다"
+    ycfg = (ROOT / "config" / "demand.yaml").read_text(encoding="utf-8")
+    assert "세렘반" in ycfg and "원통형" in ycfg, "설정에 기지 성격 근거가 없다"
+    assert "countryname.html" in ycfg, "Schedule C 코드 출처가 설정에 없다"
+    bcfg = (ROOT / "config" / "battery.yaml").read_text(encoding="utf-8")
+    assert "supply_markets" in bcfg and "가동률" in bcfg
+    print("  ✓ 원통형 경고 · 상한 표시 · B/L 한계가 화면·설정에 남아 있다")
+
+
+def test_build_attaches_overseas_bases():
+    """빌드 산출물에 기지 축이 실리고, 상한 경고가 따라붙는지."""
+    import test_battery as T
+    bb, cfg = _bb(), B.load()
+    db = Path(tempfile.mkdtemp()) / "f.sqlite"
+    months = T._fixture(db)
+    rows = []
+    for i, p in enumerate(months):
+        grow = 1 + 0.03 * i
+        rows.append({"source": "census", "series": "8507600030:ALL", "period": p,
+                     "value": 400e6 * grow, "unit": "USD"})
+        # 한국發은 줄고, 말레이시아發이 그만큼 늘어나는 시드 — '기지 이전'이 정답
+        rows.append({"source": "census", "series": "8507600030:KR", "period": p,
+                     "value": 160e6 * max(0.2, 1 - 0.03 * i), "unit": "USD"})
+        rows.append({"source": "census", "series": "8507600030:C:5800", "period": p,
+                     "value": 160e6 * max(0.2, 1 - 0.03 * i), "unit": "USD"})
+        rows.append({"source": "census", "series": "8507600030:C:5570", "period": p,
+                     "value": 30e6 * (1 + 0.09 * i), "unit": "USD"})
+        rows.append({"source": "census", "series": "8507600030:C:5700", "period": p,
+                     "value": 90e6 * grow, "unit": "USD"})
+    with Store(db) as st:
+        st.upsert_demand(rows)
+        st.save_json("demand_verify", {}) if hasattr(st, "save_json") else None
+        payload = bb.build(st, cfg)
+    dm = payload["demand"]
+    bs = dm["bases"]
+    assert bs["declared"], "기지 선언 목록이 페이로드에 없다"
+    assert "상한" in bs["note"], "상한 경고가 페이로드에서 빠졌다"
+    # ctyNames 가 없는 상황(verify 파일 없음)에서도 코드로 매칭돼야 한다
+    mal = [r for r in bs["rows"] if r["name"] in ("5570", "MALAYSIA")]
+    assert mal, f"말레이시아가 기지 행에 없다: {bs['rows']}"
+    assert mal[0]["usd"] and mal[0]["yoy"] and mal[0]["yoy"] > 0, mal[0]
+    assert bs["wide"] is not None and dm["imp"]["share"] is not None
+    assert bs["wide"] > dm["imp"]["share"], \
+        "귀속 비중이 한국發 비중보다 커야 한다 (기지를 더한 값이다)"
+    # 기지를 표시하는 플래그가 원산지 표에 실려야 화면에서 눈으로 가릴 수 있다
+    assert any(o.get("isBase") for o in dm["origins"]), dm["origins"]
+    assert not any(o.get("isBase") for o in dm["origins"] if o["cty"] == "5700"), \
+        "중국이 기지로 표시됐다"
+    print(f"  ✓ 빌드 — 한국發 {dm['imp']['share']}% / 기지 포함 {bs['wide']}% "
+          f"[{dm['verdict']['label']}]")
+
+
+def test_bases_are_pinned_regardless_of_rank():
+    """기지는 상위 12개 밖으로 밀려도 저장돼야 한다.
+
+    실측에서 말레이시아는 $202.8M · 2.1% · 9위였다. 지금은 상위 안이지만 한 달
+    물량이 비거나 품목을 바꾸면 표에서 사라진다. 그런데 이 축의 목적은 '순위'가
+    아니라 '그 물량이 한국發인지 기지發인지'를 가르는 것이다 — 사라지면 질문
+    자체가 사라진다.
+    """
+    src = (ROOT / "scripts" / "run_demand.py").read_text(encoding="utf-8")
+    cen = src.split("def collect_census")[1].split("\ndef ")[0]
+    code = "\n".join(l for l in cen.splitlines() if not l.lstrip().startswith("#"))
+    assert "D.is_base(" in code, "기지 고정 수집이 없다 — 순위에서 빠지면 사라진다"
+    assert "top + pinned" in code, "고정분이 실제로 저장 루프에 들어가지 않는다"
+    print("  ✓ 기지는 순위와 무관하게 고정 수집")
+
+
+def test_demand_panel_renders_with_and_without_bases():
+    """★ 기지 패널은 **새 분기**다. 한쪽만 보고 넘기면 탭 전체가 죽는다.
+
+    2026-09-30 실측 사고가 정확히 이 모양이었다 — PCB 해외축에서 연결 전 분기에만
+    쓰이는 함수가 정의돼 있지 않아 `intlProbes is not defined` 로 탭 클릭이
+    아무 반응도 하지 않았다. 연결된 분기만 픽스처로 돌렸기 때문에 통과했다.
+    그래서 여기서도 **기지 있음 / 없음 두 분기**를 모두 렌더한다.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:                                  # noqa: BLE001
+        print("  – playwright 없음 — 건너뜀")
+        return
+    import json
+    import test_battery as T
+    bb, cfg = _bb(), B.load()
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+
+    for label, with_base in (("기지 없음", False), ("기지 있음", True)):
+        td = Path(tempfile.mkdtemp()); db = td / "r.sqlite"
+        months = T._fixture(db)
+        rows = []
+        for i, p in enumerate(months):
+            grow = 1 + 0.03 * i
+            rows.append({"source": "census", "series": "8507600030:ALL",
+                         "period": p, "value": 400e6 * grow, "unit": "USD"})
+            rows.append({"source": "census", "series": "8507600030:KR",
+                         "period": p, "value": 160e6 * max(0.2, 1 - 0.03 * i),
+                         "unit": "USD"})
+            if with_base:
+                rows.append({"source": "census", "series": "8507600030:C:5570",
+                             "period": p, "value": 30e6 * (1 + 0.09 * i),
+                             "unit": "USD"})
+                rows.append({"source": "census", "series": "8507600030:C:5700",
+                             "period": p, "value": 90e6 * grow, "unit": "USD"})
+        with Store(db) as st:
+            st.upsert_demand(rows)
+            payload = bb.build(st, cfg)
+        assert bool(payload["demand"]["bases"]["rows"]) is with_base, label
+
+        boot = {"data/battery.json": payload,
+                "data/manifest.json": {"generatedAt": "x", "sectors": [],
+                                       "coverage": {}}}
+        page = td / "i.html"
+        page.write_text(html.replace(
+            "<head>", "<head><script>window.__BOOTSTRAP__="
+            + json.dumps(boot, ensure_ascii=False) + ";</script>", 1),
+            encoding="utf-8")
+        errs = []
+        with sync_playwright() as pw:
+            b = pw.chromium.launch(); pg = b.new_page()
+            pg.on("pageerror", lambda e: errs.append(str(e)))
+            pg.goto(page.as_uri()); pg.wait_for_timeout(700)
+            pg.click('button[data-key="battery"]', timeout=8000)
+            pg.wait_for_timeout(900)
+            body = pg.inner_text("#view")
+            b.close()
+        assert not errs, (label, errs)
+        assert "최종 수요 대조" in body, (label, body[:200])
+        if with_base:
+            assert "한국 기업 해외 생산기지發" in body, label
+            assert "원통형" in body, "품목 성격 경고가 렌더되지 않았다"
+        else:
+            assert "한국 기업 해외 생산기지發" not in body, \
+                "기지 관측이 없는데 빈 패널이 떴다"
+        print(f"  ✓ 렌더 {label} — JS 오류 0건")
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     print(f"\n최종 수요 축 검증 — {len(tests)}개\n")
