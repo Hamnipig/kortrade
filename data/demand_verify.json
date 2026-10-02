@@ -129,8 +129,8 @@
     "Hydroelectric Pumped Storage",
     "Natural Gas with Compressed Air Storage",
     "Batteries",
-    "Solar Thermal without Energy Storage",
-    "Solar Thermal with Energy Storage"
+    "Solar Thermal with Energy Storage",
+    "Solar Thermal without Energy Storage"
    ],
    "names": [
     "",
@@ -194,13 +194,13 @@
      "technology": [
       "Hydroelectric Pumped Storage=",
       "Municipal Solid Waste=",
+      "Natural Gas with Compressed Air Storage=",
       "Nuclear=",
       "Other Gases=",
       "Other Waste Biomass=",
       "Petroleum Coke=",
       "Petroleum Liquids=",
       "Wood/Wood Waste Biomass=",
-      "Natural Gas with Compressed Air Storage=",
       "Conventional Hydroelectric=",
       "Natural Gas Fired Combustion Turbine=",
       "Offshore Wind Turbine=",
@@ -215,8 +215,8 @@
       "Natural Gas Fired Combined Cycle=",
       "Onshore Wind Turbine=",
       "Other Natural Gas=",
-      "Solar Thermal without Energy Storage=",
-      "Solar Thermal with Energy Storage="
+      "Solar Thermal with Energy Storage=",
+      "Solar Thermal without Energy Storage="
      ]
     }
    }
