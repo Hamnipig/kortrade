@@ -110,20 +110,69 @@ def build_demand(store, df, cfg, months, cur, prev, q3) -> dict:
             if not k.startswith(pre):
                 continue
             cc = k[len(pre):]
+            # ★ 3중 방어의 마지막. 옛 실행이 남긴 집계그룹 행(…:C:0026 APEC 등)이
+            #   DB 에 남아 있어도 화면에는 올리지 않는다. 집계그룹 코드는 전부
+            #   0 으로 시작하고 개별국 코드는 1000~9800 이다.
+            if cc.startswith("0"):
+                continue
             n_, p_ = win(ser_, cur), win(ser_, prev)
             if not n_:
                 continue
+            bs = DM.base_of(dc, cc, cnames.get(cc, ""))
             origins.append({
                 "cty": cc, "name": cnames.get(cc, cc), "usd": _m(n_),
                 "share": DM.share(n_, win(imp_all, cur), dc.min_base_usd),
                 "sharePrev": DM.share(p_, win(imp_all, prev), dc.min_base_usd),
                 "yoy": yoy(ser_, cur, prev),
                 "isKR": cc == dc.partner,
+                # 한국 기업의 해외 생산기지 표시 — 여기가 오르는 것은 '경쟁 패배'가
+                # 아니라 '선적지 이동'일 수 있다. 표에서 눈으로 가려야 한다.
+                "isBase": bs is not None,
+                "baseWho": (bs.who if bs else ""),
+                "baseKind": (bs.kind if bs else ""),
             })
         origins.sort(key=lambda r: -(r["usd"] or 0))
         for o in origins:
             o["shareChg"] = (None if (o["share"] is None or o["sharePrev"] is None)
                              else round(o["share"] - o["sharePrev"], 1))
+
+    # ── 한국기업 귀속 비중 — 한국發 + 해외기지 ───────────────────────────
+    # ★ 이 수치는 **상한**이다. 말레이시아發 전량이 한국 기업 물량이라는 보장이
+    #   없다 (타국 기업의 말레이 공장도 섞인다). 기업 단위로 가르려면 선하증권이
+    #   필요한데, 미국 B/L 에는 금액이 없고 HS 코드는 CBP 가 삭제해 벤더가
+    #   추정한 값이다. 그래서 '상한'이라고 못 박고 기지별 금액을 따로 보여 준다.
+    base_rows = [o for o in origins if o.get("isBase")]
+    bn = sum(win(census.get(f"{pick}:C:{o['cty']}", {}), cur) or 0
+             for o in base_rows) or None if pick else None
+    bp = sum(win(census.get(f"{pick}:C:{o['cty']}", {}), prev) or 0
+             for o in base_rows) or None if pick else None
+    kn, kp = win(imp_kr, cur), win(imp_kr, prev)
+    # ★ 기지 관측이 **양쪽 창에 모두** 있을 때만 귀속 비중을 낸다.
+    #   관측이 없으면 wide 는 한국發과 같은 값이 되는데, 그 값을 판정에 넘기면
+    #   "한국發도 귀속도 함께 하락"이 항상 참이 되어 현지화 판정을 덮어 버린다
+    #   (2026-10-02 테스트가 잡은 실수). 없을 때는 None 으로 넘겨 **예전 경로**
+    #   (현지화지수)로 판정하게 둔다.
+    have_base = bool(bn) and bool(bp)
+    wide_now = (DM.share((kn or 0) + (bn or 0), win(imp_all, cur), dc.min_base_usd)
+                if have_base and kn is not None else None)
+    wide_prev = (DM.share((kp or 0) + (bp or 0), win(imp_all, prev), dc.min_base_usd)
+                 if have_base and kp is not None else None)
+    bases = {
+        "usd": _m(bn), "share": DM.share(bn, win(imp_all, cur), dc.min_base_usd),
+        "yoy": (None if (bn is None or not bp or bp < dc.min_base_usd)
+                else round((bn / bp - 1) * 100, 1)),
+        "wide": wide_now, "widePrev": wide_prev,
+        "wideChg": (None if (wide_now is None or wide_prev is None)
+                    else round(wide_now - wide_prev, 1)),
+        "rows": [{"name": o["name"], "label": o.get("baseWho", ""),
+                  "kind": o.get("baseKind", ""), "usd": o["usd"],
+                  "share": o["share"], "shareChg": o.get("shareChg"),
+                  "yoy": o["yoy"]} for o in base_rows],
+        "declared": [{"label": b.label, "who": b.who, "kind": b.kind}
+                     for b in dc.bases],
+        "note": "한국發 + 한국 기업 해외기지. **상한**입니다 — 그 나라發 전량이 "
+                "한국 기업 물량이라는 보장은 없습니다.",
+    }
     origins = origins[:10]
 
     # ── 대미 현지화지수 — 판정의 **두 번째 조건** ─────────────────────────
@@ -255,11 +304,13 @@ def build_demand(store, df, cfg, months, cur, prev, q3) -> dict:
                                     "imp": [imp_all.get(p) for p in months],
                                     "cap": [cap.get(p) for p in months]})["starts"].items()},
         "origins": origins,
+        "bases": bases,
         "loc": {"now": loc_now, "prev": loc_prev,
                 "note": "대미 (부품+소재) ÷ 완제품, 최근 %d개월" % cfg.recent},
         "verdict": DM.attribute(kr_yoy, imp_yoy, s_now, s_prev, cap_yoy,
                                 dc.flat_pct, dc.share_pp,
-                                loc_now=loc_now, loc_prev=loc_prev),
+                                loc_now=loc_now, loc_prev=loc_prev,
+                                wide_now=wide_now, wide_prev=wide_prev),
         "verify": verify,
         "sources": [
             {"name": "미국 수입", "who": "US Census International Trade API",
@@ -487,7 +538,12 @@ def build(store: Store, cfg: B.BatteryConfig) -> dict | None:
         f_n, f_p = agg(sub, fin_c, cur, "eu"), agg(sub, fin_c, prev, "eu")
         u_n, u_p = agg(sub, up_c, cur, "eu"), agg(sub, up_c, prev, "eu")
         e_n, e_p = agg(sub, eq_c, cur, "eu"), agg(sub, eq_c, prev, "eu")
-        if f_n + u_n < 5_000_000:
+        # ★ 공급기지는 완제품 수출이 거의 없다 — 같은 문턱을 적용하면 통째로
+        #   탈락한다. 공급기지는 상류+장비 기준으로 문턱을 본다.
+        supply = mk in cfg.supply_markets
+        if not supply and f_n + u_n < 5_000_000:
+            continue
+        if supply and u_n + e_n < 2_000_000:
             continue
         f3, f3p = agg(sub, fin_c, q3, "eu"), agg(sub, fin_c, q3p, "eu")
         u3, u3p = agg(sub, up_c, q3, "eu"), agg(sub, up_c, q3p, "eu")
@@ -515,15 +571,22 @@ def build(store: Store, cfg: B.BatteryConfig) -> dict | None:
             fv, uv = float(g_f.get(p, 0.0)), float(g_u.get(p, 0.0))
             mloc.append(round(uv / fv, 2) if fv > 0 else None)
 
+        u_yoy = W.pct(u_n, u_p, W.MIN_BASE_USD)
+        e_yoy = W.pct(e_n, e_p, W.MIN_BASE_USD)
         mkts.append({
             "market": mk,
+            # ★ 공급기지는 '현지화' 질문이 성립하지 않는다 (완제품 분모가 0 에
+            #   가깝다). 판정을 바꿔 끼운다 — 같은 표에 두되 묻는 것이 다르다.
+            "role": "supply" if supply else "demand",
             "final": _m(f_n), "finalYoy": f_yoy,
-            "upstream": _m(u_n), "upstreamYoy": W.pct(u_n, u_p, W.MIN_BASE_USD),
-            "equip": _m(e_n), "equipYoy": W.pct(e_n, e_p, W.MIN_BASE_USD),
+            "upstream": _m(u_n), "upstreamYoy": u_yoy,
+            "equip": _m(e_n), "equipYoy": e_yoy,
             "total": _m(t_n), "totalYoy": t_yoy,
             "loc": B.localization(f_n, u_n), "locPrev": B.localization(f_p, u_p),
             "locQ3": loc_q3, "locQ3Prev": loc_q3p,
-            "verdict": B.loc_verdict(f_yoy, t_yoy, loc_q3, loc_q3p),
+            "verdict": (B.supply_verdict(u_yoy, e_yoy)
+                        if supply else
+                        B.loc_verdict(f_yoy, t_yoy, loc_q3, loc_q3p)),
             "finals": finals, "mLoc": mloc,
         })
     mkts.sort(key=lambda r: (r["market"] != "ALL", -(r["total"] or 0)))

@@ -114,6 +114,15 @@ def collect_census(cfg: D.DemandConfig, store: Store, key: str,
                 #   '+' 를 %2B(리터럴 플러스)로 인코딩해 Census 가 못 읽는다.
                 #   공백을 넣어야 '+' 로 인코딩돼 문서의 예시와 같아진다.
                 "time": f"from {start} to {end}", "key": key,
+                # ★ 2026-10-02 정정. 이게 없으면 Census 가 **국가 집계그룹 행까지**
+                #   같이 보낸다 — 0026 APEC, 0022 OECD, 0014 PACIFIC RIM,
+                #   0027 ASEAN, 0023 NATO, 0003 EU. 이들은 4자리 숫자라서
+                #   아래의 "4자리 숫자만 센다" 필터를 그대로 통과했고,
+                #   전세계 합계(:ALL)가 실측 2.5배로 부풀어 한국 비중이
+                #   그만큼 과소계상됐다 (한국 ESS 비중이 가짜로 낮게 찍혔다).
+                #   공식 해법은 이 파라미터다 — variables.json 의 설명:
+                #   "Detail ('DET') or Country Grouping ('CGP') indicator".
+                "SUMMARY_LVL": "DET",
             }
             if partner:
                 params["CTY_CODE"] = partner
@@ -139,8 +148,15 @@ def collect_census(cfg: D.DemandConfig, store: Store, key: str,
             for r in data[1:]:
                 # 전세계는 국가별 행이 전부 오므로 기간별로 합산한다.
                 # CTY_CODE '-' 나 집계행이 섞이면 이중계상이 되므로 4자리 숫자만 센다.
+                #
+                # ★ 그리고 **0으로 시작하는 코드는 반드시 뺀다.** 집계그룹 코드는
+                #   전부 0 으로 시작하고(0026 APEC, 0022 OECD, 0027 ASEAN …)
+                #   개별국 Schedule C 코드는 1000~9800 범위라 0 으로 시작하지
+                #   않는다. 위의 SUMMARY_LVL=DET 와 **이중 방어**다 — 파라미터가
+                #   무시되는 응답이 와도 합계가 깨지지 않게 한다.
                 cc = str(r[head["CTY_CODE"]])
-                if partner is None and not (cc.isdigit() and len(cc) == 4):
+                if partner is None and not (cc.isdigit() and len(cc) == 4
+                                            and not cc.startswith("0")):
                     continue
                 p = str(r[head["time"]]) if "time" in head else None
                 if not p or len(p) != 7:
@@ -160,13 +176,32 @@ def collect_census(cfg: D.DemandConfig, store: Store, key: str,
                              "period": p, "value": v, "unit": "USD"})
 
             # ── 원산지별 — 금액 상위 국가만 남긴다 (전수를 담으면 DB 가 커진다) ──
+            #
+            # ★ 단, **한국 기업의 해외 생산기지는 순위와 무관하게 고정 수집한다.**
+            #   이유: 말레이시아는 실측 2.1%(9위)였다. 상위 12개 안이라 지금은
+            #   들어오지만, 품목을 바꾸거나 한 달 물량이 비면 표에서 사라진다.
+            #   그런데 이 축의 목적은 "순위"가 아니라 "한국 기업 귀속 물량이
+            #   한국發인지 말레이發인지"를 가르는 것이다. 사라지면 질문 자체가
+            #   사라진다. 그래서 config/demand.yaml 의 kr_bases 는 항상 담는다.
+            #   국가 지정은 **코드가 아니라 응답의 CTY_NAME 으로** 맞춘다 —
+            #   Schedule C 코드를 손으로 적으면 오타가 조용히 틀린 나라를 센다.
             if partner is None and by_cty:
                 top = sorted(by_cty, key=lambda k: -sum(by_cty[k].values()))[:TOP_ORIGINS]
-                for cc in top:
+                pinned = [cc for cc in by_cty
+                          if cc not in top and D.is_base(cfg, cc, names.get(cc, ""))]
+                for cc in top + pinned:
                     for p, v in by_cty[cc].items():
                         rows.append({"source": "census",
                                      "series": f"{c.code}:C:{cc}",
                                      "period": p, "value": v, "unit": "USD"})
+    # ★ 고치기 전 실행이 남긴 집계그룹 계열을 지운다. UPSERT 는 덮어쓰기만 하므로
+    #   `…:C:0026`(APEC) 같은 행은 수집 필터를 고쳐도 DB 에 영원히 남아 원산지
+    #   표에 계속 찍힌다. 코드가 0 으로 시작하는 원산지 계열만 지운다 —
+    #   개별국 Schedule C 코드는 1000~9800 이라 걸리지 않는다.
+    for c in cfg.codes:
+        _n = store.purge_demand("census", f"{c.code}:C:0%")
+        if _n:
+            log.info("집계그룹 계열 %d행 삭제 (%s)", _n, c.code)
     if rows:
         store.upsert_demand(rows)
     # 설명 대조 — 기계가 확인한 것만 active 로 승격한다
