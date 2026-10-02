@@ -421,6 +421,31 @@ def build_intl(cfg: P.PcbConfig, store: Store | None = None,
             d["connected"] = True
             d["needKey"] = None
 
+    # ── 갱신 주기 — 이 축의 가장 큰 제약 ─────────────────────────────────
+    # ★ METI 생산동태통계 **자체는 월차**다(速報 M+1말 / 確報 M+2중순).
+    #   그런데 e-Stat 의 **DB(=API)** 에는 2011년 이후 월차 표가 없다. 월차 DB 표
+    #   (0003058554)는 2010-12 에서 멈췄고, 그 뒤로는 **파일(엑셀)로만** 나온다.
+    #   우리가 쓰는 「{연도}年 時系列表」 계열은 **年報 산하**라 매년 6월 말에
+    #   한 번 갱신된다 — 2021~2025년 표의 공개일이 전부 6월 말이었다.
+    #
+    #   즉 이 축은 월간 화면에 있지만 **1년에 한 번 바뀐다.** 그 사실을 화면에
+    #   적지 않으면 "최신 숫자"로 오해된다. 월차로 바꾸려면 API 가 아니라
+    #   e-Stat 파일 경로(00550205 共通集計表 / 00550200 確報 월보)를 긁어야 한다.
+    y = int(latest[:4])
+    cadence = {
+        "freq": "연 1회",
+        "label": "年報 산하 시계열표 — 매년 6월 말 갱신",
+        "nextAt": f"{y + 1}-06",
+        "note": "METI 생산동태통계 **자체는 월차**입니다(速報 익월말 · 確報 익익월 중순). "
+                "다만 e-Stat 의 **API(DB)** 에는 2011년 이후 월차 표가 없고 "
+                "**파일(엑셀)로만** 제공됩니다. 우리가 쓰는 표는 年報 산하라 "
+                "**1년에 한 번** 바뀝니다 — 월간 화면에 있지만 월간 지표가 아닙니다.",
+        "monthlyPath": "월차로 바꾸려면 e-Stat 파일 경로"
+                       "(00550205 共通集計表 · 00550200 確報 월보, 키 불필요)를 "
+                       "내려받아 파싱해야 합니다. 그 경우 시차는 **確報 M+2 중순**입니다 "
+                       "— 速報(M+1말)에는 층수별 구분이 없을 가능성이 큽니다.",
+    }
+
     return {
         "ok": True,
         "asOf": latest, "months": months,
@@ -429,6 +454,7 @@ def build_intl(cfg: P.PcbConfig, store: Store | None = None,
                    "cycle": ev.get("cycle"), "from": ev.get("from"), "to": ev.get("to"),
                    "rows": ev.get("rows"), "missing": ev.get("missing") or []},
         "credit": ic.credit,
+        "cadence": cadence,
         "rows": rows,
         "mix": {"label": "고부가 비중 (10층 이상 + 빌드업 다층)",
                 "now": mix_now, "prev": mix_prev, "chg": mix_chg, "m": mix_m,
