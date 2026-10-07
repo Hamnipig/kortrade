@@ -217,6 +217,161 @@ def test_site_html_contract():
     print("  ✓ 사이트/워크플로 계약 (키 하드코딩 없음 · 국가별 수집 연결)")
 
 
+def test_long_notes_are_folded_not_deleted():
+    """긴 설명은 **접는다 — 지우지 않는다.**
+
+    요청의 배경: 섹터 데이터를 보려고 탭을 열면 설명문이 먼저 네댓 단락 깔려
+    표와 차트가 스크롤 밖으로 밀렸다. 그런데 그 설명문은 이 대시보드의 자산이다
+    ('말레이시아는 원통형 기지라 ESS 로 읽으면 틀린다' 같은 내용이고, 지우면
+    다음 달에 같은 오독을 반복한다). 그래서 첫 문장만 남기고 접는다.
+
+    이 테스트가 못박는 것
+      ① 접기 장치가 있고, ② 접는 대상은 부연설명(.thesis/.pnote/.warn)뿐이며
+      **판정(.vd)과 숫자(.stats)는 접지 않고**, ③ 한 곳에서 처리해 모든 탭에
+      자동 적용되고, ④ 재귀가 끊기고, ⑤ 저장 실패가 화면을 죽이지 않는다.
+    """
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    assert "details.fold" in html, "접기 장치가 없다"
+    assert "FOLD_MIN" in html, "길이 문턱이 없다 — 짧은 주석까지 접히면 더 읽기 어렵다"
+    # ★ 접는 대상 — 부연설명만. 판정 박스와 숫자 블록을 접으면 결론이 숨는다.
+    sel = html.split('root.querySelectorAll("')[1].split('"')[0]
+    assert ".thesis" in sel and ".pnote" in sel and ".warn" in sel, sel
+    assert ".vd" not in sel and ".stats" not in sel, \
+        f"판정·숫자 블록까지 접고 있다 ({sel}) — 그건 부연이 아니라 결론이다"
+    # ★ 렌더 함수마다 손대면 탭 하나가 빠지고, 탭을 추가할 때 또 빠진다.
+    #   #view 를 한 곳에서 지켜봐야 모든 탭에 자동 적용된다.
+    assert "MutationObserver" in html, \
+        "렌더 지점마다 호출하는 방식이면 탭 하나가 반드시 빠진다"
+    # ★ 접는 동작이 DOM 을 바꿔 observer 를 다시 깨운다 — 처리 표시가 루프를 끊는다
+    assert "dataset.fold" in html, "재귀 방지 표시가 없다 — 무한 루프가 된다"
+    # ★ 요약줄은 textContent 로 만든다. innerHTML 로 옮기면 주입 경로가 생기고
+    #   설명문 안의 <b> 까지 따라와 요약이 다시 길어진다.
+    assert "hd.textContent" in html and "innerHTML = foldHeadline" not in html
+    # ★ 펼쳤을 때 요약줄이 그대로 남으면 첫 문장이 본문과 두 번 보인다 —
+    #   접기를 넣었는데 오히려 한 단락 늘어난 것처럼 읽힌다 (실제로 그랬다).
+    assert "details.fold[open] .fhead" in html, "펼쳤을 때 요약줄을 숨기지 않는다"
+    # ★ localStorage 는 사생활 보호 모드와 file:// 에서 던진다 — 화면이 죽으면 안 된다
+    blk = html[html.index("const FOLD_KEY"):]
+    blk = blk[:blk.index("const reflow")]
+    for stmt in ("localStorage.getItem", "localStorage.setItem"):
+        i = blk.index(stmt)
+        assert "try" in blk[max(0, i - 120):i], f"{stmt} 가 try 밖에 있다"
+    # 전역 토글이 있어야 '다 펼쳐 놓고 읽기'가 가능하다
+    assert 'id="foldall"' in html and "설명 모두 펼치기" in html
+    print(f"  ✓ 접기 — 대상 {sel} · 판정/숫자 제외 · observer 1곳 · 저장 실패 안전")
+
+
+def test_every_tab_folds_its_long_notes():
+    """★ 모든 탭에서 실제로 접히는지, 그리고 **펼치면 원문이 그대로 나오는지.**
+
+    PCB 탭이 통째로 죽은 사고(2026-09-30)가 '한쪽 분기만 렌더해 봤다'에서
+    나왔다. 접기는 모든 탭의 DOM 을 건드리므로 같은 함정이 있다 —
+    탭을 하나씩 다 눌러 보고 JS 오류 0건을 확인한다.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:                                  # noqa: BLE001
+        print("  – playwright 없음 — 건너뜀 (정적 계약은 위 테스트가 본다)")
+        return
+    sys.path.insert(0, str(ROOT / "tests"))
+    import importlib.util
+
+    def _mod(name, rel):
+        sp = importlib.util.spec_from_file_location(name, ROOT / rel)
+        m = importlib.util.module_from_spec(sp); sp.loader.exec_module(m); return m
+
+    import test_battery as TB
+    import test_pcb as TP
+    from kortrade import battery as B
+    from kortrade import pcb as P
+
+    td = Path(tempfile.mkdtemp())
+    bdb, pdb = td / "b.sqlite", td / "p.sqlite"
+    months = TB._fixture(bdb)
+    rows = []
+    for i, per in enumerate(months):
+        g = 1 + 0.03 * i
+        rows += [
+            {"source": "census", "series": "8507600030:ALL", "period": per,
+             "value": 400e6 * g, "unit": "USD"},
+            {"source": "census", "series": "8507600030:KR", "period": per,
+             "value": 160e6 * max(0.2, 1 - 0.03 * i), "unit": "USD"},
+            {"source": "census", "series": "8507600030:C:5570", "period": per,
+             "value": 30e6 * (1 + 0.09 * i), "unit": "USD"},
+        ]
+    bb = _mod("bb_fold", "scripts/build_battery.py")
+    with Store(bdb) as st:
+        st.upsert_demand(rows)
+        bat = bb.build(st, B.load())
+    TP._fixture(pdb)
+    pcb = TP._build(pdb)
+
+    boot = {"data/battery.json": bat, "data/pcb.json": pcb,
+            "data/manifest.json": {"generatedAt": "x", "sectors": [],
+                                   "coverage": {}}}
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    page = td / "i.html"
+    page.write_text(html.replace(
+        "<head>", "<head><script>window.__BOOTSTRAP__="
+        + json.dumps(boot, ensure_ascii=False) + ";</script>", 1), encoding="utf-8")
+
+    # 170자 넘는 부연설명이 접히지 않고 남아 있으면 센다 (탭 하나라도 빠지면 잡힌다)
+    LEFTOVER = """() => { let n = 0;
+      document.querySelectorAll('#view p,#view div').forEach(el => {
+        if (el.closest('details.fold')) return;
+        if (el.querySelector('table,svg')) return;
+        if (!/pnote|warn|thesis/.test(el.className || '')) return;
+        if ((el.innerText || '').replace(/\\s+/g, ' ').trim().length >= 170) n++;
+      });
+      return n; }"""
+    errs, seen = [], {}
+    with sync_playwright() as pw:
+        b = pw.chromium.launch(); pg = b.new_page()
+        pg.on("pageerror", lambda e: errs.append(str(e)))
+        pg.goto(page.as_uri()); pg.wait_for_timeout(700)
+        keys = pg.eval_on_selector_all(".tab", "e=>e.map(x=>x.dataset.key)")
+        assert "battery" in keys and "pcb" in keys, keys
+        for k in keys:
+            pg.click(f'button[data-key="{k}"]'); pg.wait_for_timeout(800)
+            seen[k] = {
+                "folds": pg.eval_on_selector_all("#view details.fold", "e=>e.length"),
+                "left": pg.evaluate(LEFTOVER),
+                "len": len(pg.inner_text("#view")),
+            }
+        # 배터리 탭에서 접힘 → 펼침으로 본문이 돌아오는지 (지운 게 아니라 접은 것)
+        pg.click('button[data-key="battery"]'); pg.wait_for_timeout(800)
+        short = pg.inner_text("#view")
+        pg.click("#foldall"); pg.wait_for_timeout(300)
+        full = pg.inner_text("#view")
+        label = pg.inner_text("#foldall")
+        # 다시 렌더해도 펼친 상태가 유지되는지 (매번 접히면 토글이 무의미하다)
+        pg.click('button[data-key="pcb"]'); pg.wait_for_timeout(700)
+        kept = pg.eval_on_selector_all("#view details.fold",
+                                       "e=>[e.filter(d=>d.open).length, e.length]")
+        b.close()
+
+    assert not errs, errs
+    for k, v in seen.items():
+        assert v["left"] == 0, f"{k} 탭에 안 접힌 긴 설명 {v['left']}개"
+    assert seen["battery"]["folds"] >= 3, seen["battery"]
+    assert seen["pcb"]["folds"] >= 1, seen["pcb"]
+    # ★ 핵심 — 접은 상태가 더 짧고, 펼치면 원문이 **그대로** 돌아온다
+    assert len(full) > len(short) * 1.15, (len(short), len(full))
+    # 요약줄 뒤에 숨어 있던 본문(기업명까지 들어간 뒷단락)이 펼치면 돌아와야 한다
+    assert "캔·캡 출하량" in full, "펼쳤는데 원문이 없다 — 접은 게 아니라 지운 것이다"
+    assert "캔·캡 출하량" not in short, "접었는데 본문이 그대로 보인다"
+    # 접힌 상태에서도 **요지**는 보여야 한다 (요약줄이 첫 문장들을 들고 있다)
+    assert "품목 성격을 반드시 함께 보십시오" in short, \
+        "접으면 무슨 이야기인지조차 알 수 없다 — 요약줄에 첫 문장이 없다"
+    assert "ESS 컨테이너가 아닙니다" in short, \
+        "요약줄이 첫 문장 하나로 끊겼다 — 짧은 첫 문장은 다음 문장까지 이어야 한다"
+    assert label == "설명 모두 접기", label
+    assert kept[0] == kept[1] and kept[1] > 0, f"재렌더에서 다시 접혔다 {kept}"
+    print(f"  ✓ 전 탭 접기 — 배터리 {seen['battery']['folds']}개 · "
+          f"PCB {seen['pcb']['folds']}개 · {len(short)}자 → 펼치면 {len(full)}자 · "
+          f"JS 오류 0건")
+
+
 
 
 def test_watchlist_config_and_build():
