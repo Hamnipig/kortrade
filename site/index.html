@@ -123,6 +123,42 @@ tbody tr.newcat td{border-top:1px solid var(--rule)}
 .warn{background:var(--surface-2);border-left:2px solid var(--s4);padding:9px 12px;
   font-size:11.5px;color:var(--ink-2);border-radius:0 3px 3px 0;margin-top:12px;line-height:1.55}
 
+/* ── 긴 설명 접기 ────────────────────────────────────────────────────────
+   이 대시보드의 설명문은 '왜 이 숫자를 이렇게 읽어야 하는가'를 담고 있어서
+   지울 수 없다 (지우면 다음 달에 같은 오독을 반복한다). 그런데 한 패널에
+   네댓 단락이 붙으면 표와 차트가 스크롤 밖으로 밀린다.
+   그래서 **첫 문장만 남기고 접는다** — 요지는 접힌 상태에서도 보이고,
+   근거는 한 번 눌러서 본다. 없애는 게 아니라 접는 것이다. */
+details.fold{margin:4px 0 12px;border-left:2px solid var(--rule);padding-left:10px}
+details.fold>summary{cursor:pointer;list-style:none;font-size:11.5px;color:var(--ink-3);
+  line-height:1.5;padding:1px 0;display:flex;gap:7px;align-items:baseline}
+details.fold>summary::-webkit-details-marker{display:none}
+details.fold>summary::before{content:"▸";font-family:var(--mono);font-size:9px;
+  color:var(--ink-3);flex:none;transform:translateY(-1px)}
+details.fold[open]>summary::before{content:"▾"}
+details.fold>summary .fmore{font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;
+  color:var(--ink-3);border:1px solid var(--rule);border-radius:2px;padding:0 4px;
+  flex:none;white-space:nowrap}
+details.fold[open]>summary{color:var(--ink-3);font-weight:400}
+/* 펼치면 요약줄은 '접기'만 남긴다 — 첫 문장이 본문과 두 번 보이면 안 된다 */
+details.fold[open] .fhead,details.fold[open] .fmore{display:none}
+details.fold[open]>summary::after{content:"접기";font-family:var(--mono);
+  font-size:9.5px;letter-spacing:.06em;color:var(--ink-3);border:1px solid var(--rule);
+  border-radius:2px;padding:0 4px}
+details.fold>summary:hover{color:var(--ink-2)}
+details.fold>summary:focus-visible{outline:2px solid var(--s1);outline-offset:2px}
+details.fold>.pnote,details.fold>.warn,details.fold>.thesis{margin:6px 0 2px}
+details.fold>summary:has(+.thesis){font-size:13px;color:var(--ink-2)}
+details.fold.fw{border-left-color:var(--s4)}
+details.fold>.warn{border-left:0;padding-left:0;background:none;margin-top:6px}
+
+.foldbar{display:flex;justify-content:flex-end;margin:-10px 0 12px}
+.foldbtn{background:none;border:1px solid var(--rule);border-radius:2px;cursor:pointer;
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;color:var(--ink-3);
+  padding:3px 9px}
+.foldbtn:hover{color:var(--ink-2);border-color:var(--axis)}
+.foldbtn:focus-visible{outline:2px solid var(--s1);outline-offset:2px}
+
 .empty{background:var(--surface);border:1px solid var(--rule);border-radius:3px;
   padding:34px 22px;text-align:center;color:var(--ink-2)}
 .empty h3{margin:0 0 8px;font-size:16px;color:var(--ink);font-weight:600}
@@ -247,6 +283,9 @@ tbody tr.newcat td{border-top:1px solid var(--rule)}
   </header>
 
   <div class="tabs" id="tabs" role="tablist"></div>
+  <div class="foldbar" id="foldbar" hidden>
+    <button class="foldbtn" id="foldall" type="button" aria-pressed="false">설명 모두 펼치기</button>
+  </div>
   <div id="view"></div>
 
   <p class="foot" id="foot"></p>
@@ -2998,6 +3037,122 @@ Promise.allSettled([getJSON("data/manifest.json"), getJSON("data/watchlist.json"
         <p>수집이 한 번도 성공하지 않았거나 <code>site/data/</code> 가 비어 있습니다.
           GitHub Actions 의 <b>Update trade data</b> 워크플로를 실행하세요.</p></div>`;
   });
+
+/* ── 긴 설명 접기 ──────────────────────────────────────────────────────────
+   문제: 섹터 데이터를 보려고 탭을 열면 설명문이 먼저 네댓 단락 깔려서 표와
+   차트가 스크롤 밖으로 밀린다. 그런데 그 설명문은 지울 수 없다 — '말레이시아는
+   원통형 기지라 ESS 로 읽으면 틀린다' 같은 내용이고, 지우면 다음 달에 같은
+   오독을 반복한다.
+
+   해법: **첫 문장만 남기고 접는다.** 접힌 줄에 요지가 남으므로 훑을 때는
+   그것만 읽고, 근거가 필요하면 한 번 누른다. 지우는 게 아니라 접는 것이다.
+
+   ★ 왜 렌더 함수마다 손대지 않고 한 곳에서 처리하는가: 탭이 여섯 개이고
+     #view 를 갈아끼우는 지점이 여러 곳이다. 한 곳이라도 빠지면 그 탭만
+     안 접히고, 나중에 탭을 추가하면 또 빠진다. MutationObserver 로 #view 를
+     지켜보면 **모든 탭에 자동으로** 적용되고 새 탭도 공짜로 따라온다.
+   ★ 재귀 방지: 접는 동작 자체가 DOM 을 바꿔 다시 observer 를 깨운다.
+     처리한 노드에 data-fold 를 찍어 두 번째 패스가 아무 일도 하지 않게 만든다
+     (그래서 변경이 안 생기고 루프가 끝난다). 플래그는 2중 안전장치다.           */
+const FOLD_MIN = 170;          // 이 글자수를 넘는 설명만 접는다
+const FOLD_KEY = "kortrade.foldOpen";
+let FOLD_OPEN = false;         // '모두 펼치기' 상태
+let folding = false;
+
+try { FOLD_OPEN = localStorage.getItem(FOLD_KEY) === "1"; } catch (e) { /* 무시 */ }
+
+// 첫 문장만 뽑는다 — 접힌 상태에서도 요지는 보여야 한다.
+// 소수점(2.1%)·HS 코드(8507.60)에 걸리지 않게 마침표 뒤 공백/끝만 문장 끝으로 본다.
+function foldHeadline(t){
+  // ★ 첫 문장이 짧으면("품목 성격을 반드시 함께 보십시오.") 그것만으로는 무슨
+  //   이야기인지 알 수 없다. 40자를 넘을 때까지 다음 문장을 이어 붙인다.
+  const END = /(?:니다\.|습니다\.|다\.|요\.|\.(?=\s)|\.$)/g;
+  let h = "", last = 0;
+  END.lastIndex = 0;
+  for (let m; (m = END.exec(t)); ){
+    last = m.index + m[0].length;
+    if (last > 118) break;
+    h = t.slice(0, last);
+    if (h.length >= 40) break;
+  }
+  // ★ 문장 끝을 못 찾거나 첫 문장이 너무 짧으면("금액이 아니라 단가를 봅니다.")
+  //   그대로 쓰면 무슨 이야기인지 알 수 없다. 118자까지 끊어 쓰고,
+  //   단어 중간이 잘리지 않게 마지막 공백에서 자른다.
+  if (h.length < 40){
+    let cut = t.slice(0, 118);
+    const sp = cut.lastIndexOf(" ");
+    if (sp > 60) cut = cut.slice(0, sp);
+    if (cut.length > h.length) h = cut;
+  }
+  h = h.trim();
+  if (h.length < t.length) h = h.replace(/\s+$/, "") + " …";
+  return h;
+}
+
+function foldOne(el){
+  if (el.dataset.fold) return false;          // 이미 처리됨 — 루프를 끊는 표시
+  el.dataset.fold = "1";
+  if (el.closest("details.fold") || el.closest("summary")) return false;
+  const txt = (el.textContent || "").replace(/\s+/g, " ").trim();
+  if (txt.length < FOLD_MIN) return false;    // 짧은 주석은 그대로 둔다
+  const d = document.createElement("details");
+  d.className = "fold" + (el.classList.contains("warn") ? " fw" : "");
+  d.open = FOLD_OPEN;
+  const sm = document.createElement("summary");
+  const hd = document.createElement("span");
+  hd.className = "fhead";
+  // textContent 로 넣는다 — 설명문에 들어 있는 <b> 를 그대로 옮기면
+  // 요약줄이 다시 길어지고, innerHTML 로 옮기면 주입 경로가 생긴다.
+  hd.textContent = foldHeadline(txt);
+  const tag = document.createElement("span");
+  tag.className = "fmore";
+  tag.textContent = el.classList.contains("warn") ? "주의" : "자세히";
+  // ★ 펼쳤을 때는 요약줄을 숨긴다(CSS). 안 그러면 첫 문장이 바로 아래 본문과
+  //   겹쳐 보여서, 접기를 넣었는데 오히려 한 단락이 늘어난 것처럼 읽힌다.
+  sm.append(hd, tag);
+  d.appendChild(sm);
+  el.parentNode.insertBefore(d, el);
+  d.appendChild(el);
+  return true;
+}
+
+function foldNotes(root){
+  if (folding || !root) return;
+  folding = true;
+  let n = 0;
+  try {
+    // .thesis = 탭 진입 시 맨 위에 깔리는 머리글. 길면 표가 스크롤 밖으로 밀린다.
+    // 숫자 블록(.stats)과 판정 박스(.vd)는 접지 않는다 — 그건 결론이지 부연이 아니다.
+    root.querySelectorAll(".thesis, .pnote, .warn").forEach(el => {
+      if (foldOne(el)) n++;
+    });
+  } finally { folding = false; }
+  const bar = document.getElementById("foldbar");
+  if (bar) bar.hidden = !root.querySelector("details.fold");
+  return n;
+}
+
+(() => {
+  const view = document.getElementById("view");
+  if (!view) return;
+  foldNotes(view);
+  new MutationObserver(() => foldNotes(view)).observe(view,
+    {childList: true, subtree: true});
+  const btn = document.getElementById("foldall");
+  if (!btn) return;
+  const paint = () => {
+    btn.textContent = FOLD_OPEN ? "설명 모두 접기" : "설명 모두 펼치기";
+    btn.setAttribute("aria-pressed", String(FOLD_OPEN));
+  };
+  paint();
+  btn.addEventListener("click", () => {
+    FOLD_OPEN = !FOLD_OPEN;
+    // ★ 저장은 실패해도 화면은 돌아야 한다 (사생활 보호 모드·file:// 에서 던진다)
+    try { localStorage.setItem(FOLD_KEY, FOLD_OPEN ? "1" : "0"); } catch (e) { /* 무시 */ }
+    view.querySelectorAll("details.fold").forEach(d => { d.open = FOLD_OPEN; });
+    paint();
+  });
+})();
 
 const reflow = () => {
   if (CUR === BAT_KEY && BAT) renderBattery();
