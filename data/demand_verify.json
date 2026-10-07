@@ -2,7 +2,7 @@
  "start": "2021-01",
  "end": "2026-09",
  "census": {
-  "rows": 1140,
+  "rows": 1186,
   "codes": {
    "8507600030": {
     "label": "컨테이너형 ESS(외함 수납)",
@@ -197,11 +197,11 @@
       "Natural Gas Steam Turbine=",
       "Flywheels=",
       "None=",
-      "Batteries=",
       "Conventional Steam Coal=",
       "Landfill Gas=",
       "Natural Gas Fired Combined Cycle=",
       "Onshore Wind Turbine=",
+      "Batteries=",
       "Other Natural Gas=",
       "Solar Thermal without Energy Storage=",
       "Solar Thermal with Energy Storage="
