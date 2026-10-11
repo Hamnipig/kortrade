@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-10-07 19:04 KST",
+ "generatedAt": "2026-10-11 18:04 KST",
  "sectors": [
   {
    "key": "cosmetics",
@@ -48,7 +48,7 @@
    "from": "2021-01",
    "to": "2026-08"
   },
-  "revisions": 103
+  "revisions": 547
  },
  "source": "관세청_시군구별 품목별 수출입실적 (공공데이터포털 data.go.kr)"
 }
