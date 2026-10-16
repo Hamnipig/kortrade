@@ -1,11 +1,11 @@
 {
- "checkedAt": "2026-10-11 18:04 KST",
+ "checkedAt": "2026-10-17 07:23 KST",
  "configVersion": "2026-09-21a",
  "item": {
   "checks": [
    {
     "name": "slot00 전체 ↔ 유니버스(97개 장) 합계",
-    "months": 24,
+    "months": 25,
     "r": 1.0,
     "ratioMedian": 1.0,
     "expect": [
@@ -17,9 +17,9 @@
    },
    {
     "name": "slot08 컴퓨터주변기기 ⊃ SSD(8523511000)",
-    "months": 24,
-    "r": 0.9792,
-    "ratioMedian": 0.766,
+    "months": 25,
+    "r": 0.979,
+    "ratioMedian": 0.769,
     "expect": [
      0.5,
      0.99

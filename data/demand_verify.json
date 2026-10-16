@@ -96,7 +96,7 @@
   }
  },
  "eia": {
-  "rows": 67,
+  "rows": 12,
   "found": {
    "route": "electricity/operating-generator-capacity",
    "facet": "technology",
@@ -180,28 +180,28 @@
     ],
     "samples": {
      "technology": [
+      "Wood/Wood Waste Biomass=",
+      "Petroleum Liquids=",
+      "Other Waste Biomass=",
+      "Other Gases=",
+      "Nuclear=",
       "Hydroelectric Pumped Storage=",
       "Municipal Solid Waste=",
-      "Nuclear=",
-      "Other Gases=",
-      "Other Waste Biomass=",
       "Petroleum Coke=",
-      "Petroleum Liquids=",
-      "Wood/Wood Waste Biomass=",
       "Natural Gas with Compressed Air Storage=",
       "Conventional Hydroelectric=",
       "Natural Gas Fired Combustion Turbine=",
       "Offshore Wind Turbine=",
-      "All Other=",
-      "Geothermal=",
       "Natural Gas Steam Turbine=",
       "Flywheels=",
+      "All Other=",
+      "Geothermal=",
       "None=",
       "Conventional Steam Coal=",
-      "Landfill Gas=",
       "Natural Gas Fired Combined Cycle=",
-      "Onshore Wind Turbine=",
       "Batteries=",
+      "Onshore Wind Turbine=",
+      "Landfill Gas=",
       "Other Natural Gas=",
       "Solar Thermal without Energy Storage=",
       "Solar Thermal with Energy Storage="
@@ -209,9 +209,9 @@
     }
    }
   },
-  "fetched": 50080,
-  "total": 50080,
+  "fetched": 5000,
+  "total": 0,
   "statusRetry": false,
-  "months": "2021-01~2026-07"
+  "months": "2021-01~2021-12"
  }
 }
