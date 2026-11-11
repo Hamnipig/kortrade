@@ -128,7 +128,7 @@ def build_places(store: Store, cfg: P.PcbConfig, months, cur, prev, q3, q3p) -> 
             f = f[f["hs_code"] == code]
         return float(f["eu"].sum())
 
-    pinned = {p.match: p.why for p in cfg.places}
+    pinned = {p.match: p for p in cfg.places}
     board6 = "853400"
 
     # 고정 표시 + 상위 지역을 합집합으로 낸다. 고정 표시가 0 이면 **0 이라는 사실**이
@@ -148,9 +148,18 @@ def build_places(store: Store, cfg: P.PcbConfig, months, cur, prev, q3, q3p) -> 
         yoy = W.pct(n8, p8, W.MIN_BASE_USD)
         r3 = W.pct(n3, p3, W.MIN_BASE_USD)
         g = sub[sub["hs_code"] == board6].groupby("period")["eu"].sum()
-        why = next((w for k, w in pinned.items() if k in pl), "")
+        # ★ 지역 ↔ 기업은 **소재지 기반 추정**이다. 관세청은 기업 단위 수출액을
+        #   공개하지 않는다. 그래서 이름과 함께 추정등급(A/B/C)과 귀속 근거
+        #   (본사냐 공장이냐)를 같이 내려보낸다 — 이름만 붙이면 화면에서
+        #   '삼성전기 수출액'으로 읽힌다.
+        d = next((v for k, v in pinned.items() if k in pl), None)
+        why = d.why if d else ""
         rows.append({
-            "place": pl, "pinned": bool(why), "why": why,
+            "place": pl, "pinned": bool(d), "why": why,
+            "firms": (d.firms if d else []),
+            "firmsLabel": (d.label if d else ""),
+            "basis": (d.basis if d else ""), "grade": (d.grade if d else ""),
+            "caution": (d.caution if d else ""), "source": (d.source if d else ""),
             "usd": _m(n8), "yoy": yoy, "recentYoy": r3,
             "accel": None if (yoy is None or r3 is None) else _r(r3 - yoy, 1),
             "board": _m(win(sub, cur, board6)),
@@ -167,6 +176,13 @@ def build_places(store: Store, cfg: P.PcbConfig, months, cur, prev, q3, q3p) -> 
         "note": "시군구 축은 **금액만** 나옵니다 — 시군구 API 에는 중량 필드가 없고, "
                 "2026-09-01 지침으로 시군구 중량·HSK 10단위가 비공개가 됐습니다. "
                 "지역별 ASP 는 원리적으로 만들 수 없습니다.",
+        # 괄호 안 기업명을 '그 기업의 수출액'으로 읽는 것이 이 패널의 유일한 오독이다.
+        "firmNote": "괄호 안 기업명은 **소재지 기반 추정**입니다 — 관세청은 기업 단위 "
+                    "수출액을 공개하지 않습니다. 등급 **A**는 사실상 단일 기업이라 "
+                    "금액 레벨까지 프록시로 쓸 수 있고, **B**는 방향(YoY·가속)만, "
+                    "**C**는 여러 기업이 섞여 있어 기업 귀속을 하지 않습니다. "
+                    "귀속 근거가 **본사**인 곳(수원)은 타 사업장 생산분이 그 도시 "
+                    "신고로 잡힐 수 있습니다.",
         "warn": "지역 귀속은 「제조장소 우편번호」(제조자 사업장) 기준이지만 "
                 "**수출자 자기신고 항목**이라 품목·기업마다 품질이 다릅니다. "
                 "화장품에서 실측으로 확인됐습니다 — 화성이 색조에서는 1위인데 "
