@@ -926,6 +926,145 @@ def test_selfcheck_covers_pcb():
     print("  ✓ 배포 정합성 점검이 PCB 를 본다")
 
 
+def test_region_firm_attribution_is_declared_not_guessed():
+    """지역 옆 기업명은 **추정**이고, 추정이라는 사실이 설정에 박혀 있어야 한다.
+
+    왜 이 테스트가 있는가 (2026-11-11 실측)
+      이전 설정은 안산에 '심텍', 청주에 '대덕전자', 인천에 '대덕전자'를 적어
+      두고 있었다. **셋 다 틀렸다** — 심텍은 청주 단일(흥덕구 청주산단),
+      대덕전자는 안산(본사·MLB·MTV)과 시흥(B1·B4), 인천은 비에이치다.
+      지역 숫자를 그 기업 실적으로 읽는 순간 판단이 통째로 어긋나는 자리라,
+      기업명을 바꿀 때마다 근거(source)를 강제한다.
+    """
+    cfg = P.load()
+    assert cfg.validate() == [], cfg.validate()
+    by = {pl.match: pl for pl in cfg.places}
+    # ★ 실제로 틀렸던 자리 — 되돌아가면 안 된다
+    assert "심텍" not in " ".join(by["안산"].firms), "안산에 심텍이 되살아났다 (청주다)"
+    assert any("심텍" in f for f in by["청주"].firms), "청주 = 심텍"
+    assert any("대덕전자" in f for f in by["안산"].firms), "안산 = 대덕전자"
+    assert any("비에이치" in f for f in by["인천"].firms), "인천 = 비에이치 (대덕전자 아님)"
+    assert any("대덕전자" in f for f in by["시흥"].firms), "시흥 = 대덕전자 B1·B4센터"
+    assert any("해성디에스" in f for f in by["창원"].firms), "창원 = 해성디에스"
+    assert any("이수페타시스" in f for f in by["달성"].firms), "달성 = 이수페타시스"
+    assert any("삼성전기" in f for f in by["수원"].firms), "수원 = 삼성전기"
+
+    for pl in cfg.places:
+        if not pl.firms:
+            continue
+        assert pl.grade in ("A", "B", "C"), (pl.match, pl.grade)
+        assert pl.basis, pl.match
+        # ★ 괄호는 항상 '등'으로 닫는다 — 전수 목록으로 읽히면 없는 확정성을 준다
+        assert pl.label.endswith(" 등"), (pl.match, pl.label)
+        # 종목코드를 같이 적어 둬야 동명 기업 혼동이 없다
+        for f in pl.firms:
+            assert "(" in f and ")" in f, f"{pl.match}: '{f}' 에 종목코드가 없다"
+
+    # ★ 삼성전기는 **세 도시에 걸쳐 있다.** 수원만 보고 전사 기판 실적을 읽으면
+    #   세종(FCCSP)·부산(FC-BGA) 양산분을 통째로 놓친다.
+    sem = [m for m, pl in by.items() if any("삼성전기" in f for f in pl.firms)]
+    assert set(sem) >= {"수원", "세종", "부산"}, sem
+    assert "세종" in by["수원"].caution and "부산" in by["수원"].caution, \
+        "수원 줄에 '세종·부산과 교차 검증' 경고가 없다"
+    # 본사 귀속은 타 사업장 생산분이 섞인다 — basis 가 그걸 말해야 한다
+    assert by["수원"].basis == "본사" and by["세종"].basis == "공장"
+    print(f"  ✓ 지역↔기업 귀속 {len([p for p in cfg.places if p.firms])}곳 — "
+          f"등급·근거·종목코드 강제, 삼성전기 3개 도시 분산 명시")
+
+
+def test_region_firm_guards_reject_sloppy_attribution():
+    """근거 없는 귀속과 'A 등급인데 여러 기업'을 설정 검증이 막는지."""
+    import copy
+    base = P.load()
+
+    bad = copy.deepcopy(base)
+    bad.places[0].firms = ["아무개(000000)"]
+    bad.places[0].grade = ""
+    assert any("추정등급" in e for e in bad.validate()), bad.validate()
+
+    bad = copy.deepcopy(base)
+    for pl in bad.places:
+        if pl.grade == "A":
+            pl.firms = pl.firms + ["둘째(111111)"]
+            break
+    assert any("A 는 단일 기업만" in e for e in bad.validate()), bad.validate()
+
+    bad = copy.deepcopy(base)
+    for pl in bad.places:
+        if pl.grade in ("A", "B"):
+            pl.source = ""
+            break
+    assert any("source" in e for e in bad.validate()), bad.validate()
+
+    bad = copy.deepcopy(base)
+    for pl in bad.places:
+        if pl.firms:
+            pl.basis = ""
+            break
+    assert any("basis" in e for e in bad.validate()), bad.validate()
+    print("  ✓ 귀속 검증 — 등급 누락/A중복/근거없음/basis누락 전부 차단")
+
+
+def test_region_cards_show_firm_with_grade():
+    """★ 화면에 기업명이 **등급 배지와 함께** 떠야 한다.
+
+    이름만 띄우면 다음 달에 이 숫자를 '삼성전기 수출액'으로 읽는다. 관세청은
+    기업 단위 수출액을 공개하지 않으므로 그건 존재하지 않는 숫자다.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:                                  # noqa: BLE001
+        print("  – playwright 없음 — 건너뜀")
+        return
+    td = Path(tempfile.mkdtemp()); db = td / "f.sqlite"
+    _fixture(db)
+    payload = _build(db)
+    rows = {r["place"]: r for r in payload["places"]["rows"]}
+    got = {k: v for k, v in rows.items() if v.get("firmsLabel")}
+    assert got, "빌드 산출물에 기업 귀속이 없다"
+    for r in got.values():
+        assert r["grade"] and r["basis"], r
+        assert r["firms"] and r["firmsLabel"].endswith(" 등"), r
+    assert payload["places"]["firmNote"], "추정이라는 안내가 페이로드에 없다"
+
+    boot = {"data/pcb.json": payload,
+            "data/manifest.json": {"generatedAt": "x", "sectors": [], "coverage": {}}}
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    page = td / "i.html"
+    page.write_text(html.replace(
+        "<head>", "<head><script>window.__BOOTSTRAP__="
+        + json.dumps(boot, ensure_ascii=False) + ";</script>", 1), encoding="utf-8")
+    errs = []
+    with sync_playwright() as pw:
+        b = pw.chromium.launch(); pg = b.new_page()
+        pg.on("pageerror", lambda e: errs.append(str(e)))
+        pg.goto(page.as_uri()); pg.wait_for_timeout(700)
+        pg.click('button[data-key="pcb"]', timeout=8000); pg.wait_for_timeout(900)
+        cards = pg.eval_on_selector_all(
+            "#pplaces .sigcard",
+            "e=>e.map(c=>({t:c.querySelector('h4').innerText,"
+            " f:(c.querySelector('.firm')||{}).innerText||'',"
+            " g:(c.querySelector('.gr')||{}).innerText||'',"
+            " tip:(c.querySelector('.firm')||{}).title||''}))")
+        body = pg.inner_text("#view")
+        b.close()
+    assert not errs, errs
+    named = [c for c in cards if c["f"]]
+    assert named, f"지역 카드에 기업명이 안 뜬다: {cards}"
+    for c in named:
+        assert c["f"].startswith("("), c          # 요청한 형식: '수원시 (삼성전기 등)'
+        assert c["g"] in ("A", "B", "C"), c       # 등급 배지가 반드시 함께
+        assert "추정등급" in c["tip"] and "귀속 근거" in c["tip"], c
+    one = next((c for c in named if "수원" in c["t"]), None)
+    assert one and "삼성전기" in one["f"], named
+    assert "세종" in one["tip"] and "부산" in one["tip"], \
+        "수원 툴팁에 세종·부산 교차검증 경고가 없다"
+    # ★ 화면에 '추정'이라고 못박혀 있어야 한다 (접혀 있어도 요약줄에 남는다)
+    assert "소재지 기반 추정" in body, "기업 귀속이 추정이라는 표시가 화면에 없다"
+    print(f"  ✓ 지역 카드 — {len(named)}곳에 '(기업 등)' + 등급 배지 · "
+          f"추정 표시 · JS 오류 0건")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     fns.sort(key=lambda f: f.__code__.co_firstlineno)
