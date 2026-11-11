@@ -1,5 +1,5 @@
 {
- "checkedAt": "2026-11-02 00:32 KST",
+ "checkedAt": "2026-11-11 10:33 KST",
  "configVersion": "2026-09-21a",
  "item": {
   "checks": [
@@ -18,7 +18,7 @@
    {
     "name": "slot08 컴퓨터주변기기 ⊃ SSD(8523511000)",
     "months": 25,
-    "r": 0.979,
+    "r": 0.9791,
     "ratioMedian": 0.769,
     "expect": [
      0.5,

@@ -1,8 +1,8 @@
 {
  "start": "2021-01",
- "end": "2026-09",
+ "end": "2026-10",
  "census": {
-  "rows": 1186,
+  "rows": 1232,
   "codes": {
    "8507600030": {
     "label": "컨테이너형 ESS(외함 수납)",
@@ -75,6 +75,7 @@
    "4000": "ICELAND",
    "4231": "BELGIUM",
    "4359": "SLOVAKIA",
+   "4470": "ESTONIA",
    "4490": "LATVIA",
    "4510": "LITHUANIA",
    "4710": "PORTUGAL",
@@ -83,11 +84,13 @@
    "2230": "COSTA RICA",
    "7910": "SOUTH AFRICA",
    "5200": "UNITED ARAB EMIRATES",
+   "3370": "CHILE",
    "4239": "LUXEMBOURG",
+   "7230": "TUNISIA",
    "7420": "CAMEROON",
    "7450": "MALI",
+   "7470": "SIERRA LEONE",
    "4411": "LIECHTENSTEIN",
-   "4470": "ESTONIA",
    "4623": "UKRAINE",
    "4730": "MALTA",
    "4870": "BULGARIA",
@@ -96,7 +99,7 @@
   }
  },
  "eia": {
-  "rows": 12,
+  "rows": 68,
   "found": {
    "route": "electricity/operating-generator-capacity",
    "facet": "technology",
@@ -117,8 +120,8 @@
     "Hydroelectric Pumped Storage",
     "Natural Gas with Compressed Air Storage",
     "Batteries",
-    "Solar Thermal without Energy Storage",
-    "Solar Thermal with Energy Storage"
+    "Solar Thermal with Energy Storage",
+    "Solar Thermal without Energy Storage"
    ],
    "names": [
     "",
@@ -180,38 +183,38 @@
     ],
     "samples": {
      "technology": [
-      "Wood/Wood Waste Biomass=",
       "Petroleum Liquids=",
-      "Other Waste Biomass=",
+      "Wood/Wood Waste Biomass=",
       "Other Gases=",
-      "Nuclear=",
       "Hydroelectric Pumped Storage=",
-      "Municipal Solid Waste=",
       "Petroleum Coke=",
+      "Other Waste Biomass=",
+      "Nuclear=",
+      "Municipal Solid Waste=",
       "Natural Gas with Compressed Air Storage=",
       "Conventional Hydroelectric=",
       "Natural Gas Fired Combustion Turbine=",
       "Offshore Wind Turbine=",
       "Natural Gas Steam Turbine=",
-      "Flywheels=",
       "All Other=",
       "Geothermal=",
+      "Flywheels=",
       "None=",
-      "Conventional Steam Coal=",
       "Natural Gas Fired Combined Cycle=",
-      "Batteries=",
       "Onshore Wind Turbine=",
+      "Conventional Steam Coal=",
       "Landfill Gas=",
+      "Batteries=",
       "Other Natural Gas=",
-      "Solar Thermal without Energy Storage=",
-      "Solar Thermal with Energy Storage="
+      "Solar Thermal with Energy Storage=",
+      "Solar Thermal without Energy Storage="
      ]
     }
    }
   },
-  "fetched": 5000,
-  "total": 0,
+  "fetched": 51504,
+  "total": 51504,
   "statusRetry": false,
-  "months": "2021-01~2021-12"
+  "months": "2021-01~2026-08"
  }
 }

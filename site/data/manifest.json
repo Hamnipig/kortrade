@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-11-02 00:32 KST",
+ "generatedAt": "2026-11-11 10:35 KST",
  "sectors": [
   {
    "key": "cosmetics",
@@ -9,8 +9,8 @@
    "order": 1,
    "ready": true,
    "asOf": "2026-09",
-   "ytd": 8744.9,
-   "yoy": 29.7,
+   "ytd": 8650.2,
+   "yoy": 28.3,
    "cats": 8
   },
   {
@@ -34,21 +34,21 @@
  ],
  "coverage": {
   "sector_trade": {
-   "rows": 148551,
+   "rows": 148552,
    "from": "2020-01",
    "to": "2026-09"
   },
   "region_trade": {
-   "rows": 151282,
+   "rows": 151283,
    "from": "2020-01",
    "to": "2026-09"
   },
   "demand_series": {
-   "rows": 2093,
+   "rows": 2140,
    "from": "2021-01",
-   "to": "2026-08"
+   "to": "2026-09"
   },
-  "revisions": 7105
+  "revisions": 15500
  },
  "source": "관세청_시군구별 품목별 수출입실적 (공공데이터포털 data.go.kr)"
 }
