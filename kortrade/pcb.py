@@ -87,8 +87,33 @@ class Code:
 
 @dataclass
 class Place:
+    """시군구 한 줄과, 거기에 잡힐 것으로 **추정되는** 기업.
+
+    ★ 이건 소재지 기반 추정이지 기업별 통관 실적이 아니다. 관세청은 기업 단위
+      수출액을 공개하지 않는다. basis 가 '본사'면 타 사업장 생산분이 그 도시
+      신고로 잡힐 수 있고(화장품 실측: HS 330499 전국 1위가 서울 강남구였다),
+      grade 가 C 면 여러 기업이 섞여 있어 기업 귀속 자체를 하면 안 된다.
+    """
     match: str
     why: str = ""
+    firms: list[str] = field(default_factory=list)
+    basis: str = ""          # 본사 | 공장 | 본사·공장
+    grade: str = ""          # A 단일 / B 소수 혼재 / C 다수 혼재
+    caution: str = ""
+    source: str = ""
+
+    @property
+    def label(self) -> str:
+        """화면에 괄호로 붙일 짧은 이름 — '삼성전기 등', '대덕전자·코리아써키트 등'.
+
+        ★ 항상 '등'을 붙인다. 등급 A 라도 그 시군구 수출이 그 기업만이라는 보장은
+          없고, 괄호 안을 전수 목록으로 읽히게 두면 없는 확정성을 주게 된다.
+        """
+        names = [f.split("(")[0] for f in self.firms if f]
+        if not names:
+            return ""
+        head = "·".join(names[:2])
+        return f"{head} 등"
 
 
 @dataclass
@@ -179,6 +204,27 @@ class PcbConfig:
             elif h not in self.markets:
                 errs.append(f"허브 '{h}' 가 markets 에 없다 — 수집하지 않는 국가를 "
                             "허브로 적으면 영원히 0 으로 잡힌다")
+        # ── 지역 ↔ 기업 귀속 ──────────────────────────────────────────
+        # 틀린 기업명을 달아 두면 지역 숫자를 그 기업 실적으로 읽는 순간 판단이
+        # 통째로 어긋난다. 실제로 그랬다 — 2026-11 이전 설정은 안산에 '심텍',
+        # 청주에 '대덕전자'를 적어 두고 있었다(둘 다 반대였다).
+        for pl in self.places:
+            if not pl.firms:
+                continue
+            if pl.grade not in ("A", "B", "C"):
+                errs.append(f"지역 '{pl.match}': 기업을 달았으면 추정등급"
+                            f"(A/B/C)이 있어야 한다 (현재 {pl.grade!r})")
+            if not pl.basis:
+                errs.append(f"지역 '{pl.match}': basis(본사/공장)가 없다 — "
+                            "본사 신고분과 그 도시 생산량은 다른 숫자다")
+            # A 등급은 '사실상 단일 기업'이라는 뜻이다. 여럿을 달 수 없다.
+            if pl.grade == "A" and len(pl.firms) > 1:
+                errs.append(f"지역 '{pl.match}': 등급 A 인데 기업이 "
+                            f"{len(pl.firms)}개다 — A 는 단일 기업만")
+            # 근거 없는 귀속은 다음 사람이 검증할 방법이 없다
+            if pl.grade in ("A", "B") and not pl.source:
+                errs.append(f"지역 '{pl.match}': 등급 {pl.grade} 인데 "
+                            "source(소재지 근거)가 없다")
         for rc in self.region_codes:
             # 시군구 API 는 HS 6단위만 받는다. 10단위를 넣으면 조용히 빈 응답이 온다.
             if not (isinstance(rc, str) and rc.isdigit() and len(rc) == 6):
@@ -221,7 +267,11 @@ def load(path: Path | None = None) -> PcbConfig:
         hubs=dict(cfg.get("hubs") or {}),
         groups={g: _codes(cfg.get(g), g) for g in GROUPS},
         region_codes=[str(x) for x in (cfg.get("region_codes") or [])],
-        places=[Place(match=str(p.get("match", "")), why=str(p.get("why", "")))
+        places=[Place(match=str(p.get("match", "")), why=str(p.get("why", "")),
+                      firms=[str(f) for f in (p.get("firms") or [])],
+                      basis=str(p.get("basis", "")), grade=str(p.get("grade", "")),
+                      caution=str(p.get("caution", "")),
+                      source=str(p.get("source", "")))
                 for p in (cfg.get("places") or [])],
         rejected=list(cfg.get("rejected") or []),
         intl=[Intl(**{k: v for k, v in dict(d).items() if k in Intl.__annotations__})
