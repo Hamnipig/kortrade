@@ -188,6 +188,14 @@ details.fold>.warn{border-left:0;padding-left:0;background:none;margin-top:6px}
 .sigcard{background:var(--surface);border:1px solid var(--rule);border-radius:3px;padding:12px 14px}
 .sigcard h4{margin:0 0 2px;font-size:12px;font-weight:600;letter-spacing:.02em}
 .sigcard .sub{font-size:11px;color:var(--ink-3);margin-bottom:8px}
+/* 지역 카드의 추정 기업명. 이름만 크게 쓰면 '그 기업 수출액'으로 읽히므로
+   등급 배지를 늘 붙여 둔다 — A 만 레벨을 믿어도 된다. */
+.sigcard .firm{font-size:11px;color:var(--ink-2);margin:1px 0 4px;line-height:1.4;
+  display:flex;gap:5px;align-items:baseline;flex-wrap:wrap}
+.gr{font-family:var(--mono);font-size:9px;line-height:1.5;padding:0 3px;border-radius:2px;
+  border:1px solid var(--rule);color:var(--ink-3);flex:none}
+.gr.a{color:var(--good);border-color:color-mix(in srgb,var(--good) 40%,transparent)}
+.gr.b{color:var(--s4);border-color:color-mix(in srgb,var(--s4) 40%,transparent)}
 .sigcard ol{margin:0;padding-left:0;list-style:none;font-size:13px}
 .sigcard li{display:flex;justify-content:space-between;gap:10px;padding:3px 0;
   border-top:1px solid var(--rule)}
@@ -2834,8 +2842,20 @@ function renderPcb(){
       <div class="sig" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
         ${pl.rows.slice(0,8).map(r=>{
           const sp = (r.m||[]).filter(x=>x!=null);
+          // 괄호 안 기업명 — 소재지 기반 **추정**이다. 등급 배지를 늘 함께 띄운다.
+          // 이름만 붙여 두면 다음 달에 이 숫자를 '삼성전기 수출액'으로 읽게 된다.
+          const gt = r.firms&&r.firms.length
+            ? `${r.firms.join(" · ")}\n귀속 근거: ${r.basis||"미상"} · 추정등급 ${
+                r.grade||"?"}${r.grade==="A"?" (단일 기업)":(r.grade==="B"
+                ?" (소수 혼재 — 방향만)":" (다수 혼재 — 기업 귀속 불가)")}${
+                r.source?"\n출처: "+r.source:""}${r.caution?"\n\n※ "+r.caution:""}`
+            : "";
           return `<div class="sigcard"><h4>${esc(r.place.split(" ").pop())}${
             r.pinned?'':' <span class="pu">순위</span>'}</h4>
+            ${r.firmsLabel?`<div class="firm" title="${esc(gt)}">
+              <span>(${esc(r.firmsLabel)})</span>
+              <span class="gr ${esc((r.grade||"").toLowerCase())}">${esc(r.grade||"?")}</span>
+              </div>`:""}
             <div class="sub" title="${esc(r.why||"")}">$${fm(r.usd)}M</div>
             <ol><li><span class="nm">${D.window}M</span>
               <span class="vl ${r.yoy>0?"up":"down"}">${pct(r.yoy)}</span></li>
@@ -2844,6 +2864,7 @@ function renderPcb(){
             ${sp.length>3?sparkSVG(sp, PGCOL.board):""}</div>`;
         }).join("")}
       </div>
+      ${pl.firmNote?`<p class="pnote" style="margin-top:10px">${mdb(pl.firmNote)}</p>`:""}
       <p class="pnote" style="margin-top:10px">${mdb(pl.warn)}</p>`;
   }
 
